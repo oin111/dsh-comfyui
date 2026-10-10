@@ -16,7 +16,7 @@
 
 ## 发布前核对清单
 
-- [x] `npm publish` 前确认 `npm pack --dry-run` 内容：`lib/`、`client/client.js`、`cordis.patch.yml`、双 README、LICENSE、package.json
+- [x] `npm publish` 前确认 `npm pack --dry-run` 内容：`lib/`、`client/client.js`、`cordis.patch.yml`、三份 README（ru/en/zh-CN）、LICENSE、package.json
 - [x] 创建 GitHub 仓库（公开），把 `D:\dsh-comfyui` 推上去（`lib/`、`client/`、`node_modules/` 已在 `.gitignore`）——已完成：`fandc520/dsh-comfyui`（SSH：`git@github.com:fandc520/dsh-comfyui.git`）
 - [x] 把仓库 URL 填进 package.json 的 `repository` 字段（已完成，`git+https://github.com/fandc520/dsh-comfyui.git`）
 - [ ] 按 awesome-dsh-plugin 仓库的贡献规范提交条目（通常是在其列表文件加一行 + PR）

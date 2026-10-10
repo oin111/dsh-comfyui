@@ -189,8 +189,8 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
     proxyBase: () => {
       // Explicit external media host wins (LAN/domain/reverse-proxy config);
       // otherwise use the origin browsers actually reached this server with;
-      // then the server's own LAN origin (reachable from remote browsers);
-      // finally fall back to loopback. The result is always an absolute
+      // then the web server's bind address (bindOrigin: a LAN IP is guessed
+      // only for a wildcard bind, loopback otherwise). The result is always an absolute
       // http(s) URL, which the chat markdown renderer requires.
       const explicit = (resolved.mediaHost ?? '').trim().replace(/\/+$/, '')
       if (explicit !== '') return explicit

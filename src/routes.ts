@@ -1289,8 +1289,8 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         return
       }
       try {
-        // Resolve the output directory from the index *before* the record is
-        // removed: the path hint may live on the very record being deleted.
+        // Only the configured absolute `outputDir` is trusted; record paths
+        // reported by ComfyUI never choose where files are unlinked.
         const assets = await runtime.listAssets()
         const outputDir = resolveOutputDir(runtime.getConfig().outputDir, assets)
         const removed = await runtime.deleteAsset(promptId)

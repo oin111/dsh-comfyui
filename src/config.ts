@@ -37,7 +37,7 @@ export const Config = z.object({
    * JSON state files belong with the rest of the plugin data. Must be absolute;
    * a relative value is ignored. */
   skillsDir: z.string().default('').volatile(),
-  /** External base URL for generated media (e.g. http://192.168.1.5:3080). Empty = auto-detect the browser's request host, then http://127.0.0.1:<webServerPort>. */
+  /** External base URL for generated media (e.g. http://192.168.1.5:3080). Empty = the host of the last authenticated browser request, then the web server's bind address (a LAN IP is guessed only for a wildcard 0.0.0.0/:: bind). */
   mediaHost: z.string().default('').volatile(),
   /** ComfyUI's output directory on this machine, used to delete asset files
    * from the panel. Only an explicit absolute path is trusted; empty means
