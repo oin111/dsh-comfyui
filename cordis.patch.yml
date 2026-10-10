@@ -1,4 +1,6 @@
-# dsh-comfyui bundle patch: inserts the plugin into a profile's layer stack.
+# Bundle patch: inserts the plugin into a profile's layer stack. `name` is the
+# module specifier (the npm package name); `id` is the settings namespace and
+# must stay `comfyui` so existing profile overrides keep applying.
 - insert:
     - id: comfyui
-      name: 'dsh-comfyui'
+      name: '@oin111/dsh-comfyui'

@@ -527,19 +527,35 @@ export class ComfyUIClient {
    * Poll history until the prompt completes, fails, or the budget/signal ends.
    * Interrupts the server when the signal aborts before throwing.
    */
+  /**
+   * Cancel one prompt without touching anyone else's work: drop it from the
+   * pending queue and interrupt it only if it is the one running. A bare
+   * `POST /interrupt` would stop whatever prompt the server is executing,
+   * including another client's. Both calls are best-effort.
+   */
+  async cancelPrompt(promptId: string): Promise<void> {
+    await Promise.allSettled([
+      this.deleteQueueItems([promptId]),
+      this.interruptPrompt(promptId),
+    ])
+  }
+
   async waitForCompletion(opts: {
     promptId: string
     timeoutMs: number
     pollIntervalMs: number
     signal: AbortSignal
+    /** Called after every history poll that has not finished yet. */
+    onPoll?: () => void
   }): Promise<ComfyUIHistoryEntry> {
     const { promptId, timeoutMs, pollIntervalMs, signal } = opts
     const deadline = Date.now() + timeoutMs
+    const interrupted = async (): Promise<never> => {
+      await this.cancelPrompt(promptId)
+      throw new ComfyUIError(`ComfyUI generation interrupted (prompt ${promptId})`)
+    }
     for (;;) {
-      if (signal.aborted) {
-        await this.interrupt().catch(() => undefined)
-        throw new ComfyUIError(`ComfyUI generation interrupted (prompt ${promptId})`)
-      }
+      if (signal.aborted) return interrupted()
       const entry = await this.getHistory(promptId)
       if (entry !== undefined) {
         const status = entry.status
@@ -550,10 +566,17 @@ export class ComfyUIClient {
           throw new ComfyUIError(historyErrorMessage(promptId, entry))
         }
       }
+      if (signal.aborted) return interrupted()
       if (Date.now() >= deadline) {
         throw new ComfyUIError(`ComfyUI generation timed out after ${timeoutMs} ms (prompt ${promptId})`)
       }
-      await sleep(pollIntervalMs, signal)
+      opts.onPoll?.()
+      try {
+        await sleep(pollIntervalMs, signal)
+      } catch {
+        // sleep only rejects on abort.
+        return interrupted()
+      }
     }
   }
 }

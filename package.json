@@ -1,10 +1,10 @@
 {
-  "name": "dsh-comfyui",
-  "version": "0.5.4",
+  "name": "@oin111/dsh-comfyui",
+  "version": "0.6.0",
   "description": "Let the DeepSeek Harness agent smartly drive a local or remote ComfyUI to generate anything, with workflow and asset management panels, per-workflow skill packs, a companion skill and a same-origin media proxy. / 让 DeepSeek Harness 的 Agent 智能驱动本地或远程 ComfyUI 生成任何内容。附带工作流、资产管理面板与技能包管理挂载。配套 skill 与同源媒体代理。",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/fandc520/dsh-comfyui.git"
+    "url": "git+https://github.com/oin111/dsh-comfyui.git"
   },
   "type": "module",
   "main": "lib/index.js",
@@ -16,7 +16,8 @@
     },
     "./client": "./client/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./icon": "./logo.png"
   },
   "files": [
     "lib",
@@ -33,7 +34,8 @@
     "build:host": "tsc -p tsconfig.json",
     "build:client": "tsdown -c tsdown.config.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "test": "npm run build && node scripts/test-host-compat.mjs && node scripts/test-store-params.mjs && node scripts/test-skillpack.mjs && node scripts/test-transfer.mjs && node scripts/test-convert.mjs"
   },
   "keywords": [
     "deepseek",
@@ -49,19 +51,22 @@
     "node": ">=22.19"
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^3.18.4",
+    "@deepseek-ai/schemastery": "~3.18.4",
     "fflate": "^0.8.3"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-settings": "^0.1.2-alpha.4 || ^0.1.5-alpha.1 || ^0.1.6-alpha.1 || ^0.1.7-alpha.1"
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-settings": ">=0.2.0-rc.2 <0.3.0-0"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-settings": "^0.1.2-alpha.4",
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh-jobs": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
     "@types/node": "^24.0.0",
     "@types/react": "~18.3.1",
     "react": "^18.3.1",
+    "semver": "^7.7.0",
     "tsdown": "^0.22.0",
     "typescript": "^5.6.0"
   },
@@ -73,7 +78,6 @@
       "platform": "web",
       "inject": [
         "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-settings"
       ]

@@ -6,6 +6,7 @@
  * workflows from the panel-managed workflow library.
  */
 import type { Context } from '@deepseek-ai/cordis'
+import type { JobHandle, JobOutcome, JobRegistry, JobSpec } from '@deepseek-ai/dsh-jobs'
 import type { Config } from './config.js'
 import { ComfyUIClient, collectMedia } from './comfyui.js'
 import { TEMPLATES, findTemplate, cloneWorkflow, applyTemplateInputs } from './templates.js'
@@ -112,8 +113,15 @@ export interface ComfyUIRuntime {
 
 /** Execution identity handed to tool execute. */
 interface ToolRunContext {
-  agent?: unknown
+  /** The live Agent handle; `id` is its SessionId (the jobs owner key since dsh 0.1.7). */
+  agent?: { readonly id: string }
   signal: AbortSignal
+}
+
+declare module '@deepseek-ai/dsh-jobs' {
+  interface JobKindMap {
+    comfyui: 'comfyui'
+  }
 }
 
 /**
@@ -186,17 +194,75 @@ interface ToolDefinition {
   execute(args: Record<string, unknown>, exec: ToolRunContext): Promise<unknown>
 }
 
-interface JobsService {
-  start(spec: {
-    kind: string
-    label: string
-    owner?: unknown
-    run(): {
-      cancel(reason?: string): void
-      done: Promise<{ status: 'completed' | 'killed' | 'failed'; detail?: string; output?: string }>
-      readOutput?(): string
-    }
-  }): string
+/**
+ * Start one background generation on the host jobs registry.
+ *
+ * dsh 0.2 contract: `owner` is the calling session's id (an Agent handle is
+ * rejected with `session "[object Object]" has no live agent`), and the model
+ * reads what `done` resolves as `result` — an `output` field is ignored, which
+ * left `job_output` empty on 0.1.7+. Cancelling stops the poll loop and cancels
+ * only this prompt on the ComfyUI side.
+ */
+export function startBackgroundRun(options: {
+  jobs: Pick<JobRegistry, 'start'>
+  runtime: Pick<ComfyUIRuntime, 'proxyBase' | 'untrack' | 'queueProgress'>
+  client: Pick<ComfyUIClient, 'waitForCompletion' | 'cancelPrompt'>
+  config: Pick<Config, 'pollIntervalMs' | 'maxMediaItems'>
+  promptId: string
+  label: string
+  waitMs: number
+  owner: string | undefined
+}): string {
+  const { jobs, runtime, client, config, promptId, label, waitMs, owner } = options
+  const spec: JobSpec = {
+    kind: 'comfyui',
+    label,
+    ...(owner !== undefined ? { owner: owner as NonNullable<JobSpec['owner']> } : {}),
+    run: (job: JobHandle) => {
+      const controller = new AbortController()
+      const startedAt = Date.now()
+      let lastProgress = ''
+      const done = (async (): Promise<JobOutcome> => {
+        try {
+          const entry = await client.waitForCompletion({
+            promptId,
+            timeoutMs: waitMs,
+            pollIntervalMs: config.pollIntervalMs,
+            signal: controller.signal,
+            onPoll: () => {
+              const progress = runtime.queueProgress(promptId)
+              if (progress === undefined || progress.max <= 0) return
+              const line = `${label}: ${progress.value}/${progress.max}`
+              if (line !== lastProgress) {
+                lastProgress = line
+                job.updateProgress(line)
+              }
+            },
+          })
+          const items = collectMedia({ promptId, entry, maxItems: config.maxMediaItems, proxyBase: runtime.proxyBase() })
+          const result: RunResult = {
+            kind: 'sync',
+            promptId,
+            status: 'completed',
+            elapsedMs: Date.now() - startedAt,
+            media: items,
+            summary: summarizeMedia(items),
+          }
+          return { status: 'completed', result: JSON.stringify(result) }
+        } catch (error) {
+          runtime.untrack(promptId)
+          const message = error instanceof Error ? error.message : String(error)
+          if (controller.signal.aborted) return { status: 'killed', detail: 'comfyui', result: message }
+          return { status: 'failed', detail: 'comfyui', result: message }
+        }
+      })()
+      return {
+        cancel: () => { controller.abort() },
+        done,
+      }
+    },
+  }
+  return jobs.start(spec)
 }
 
 const TOOL_TIMEOUT_MS = 3_600_000
@@ -374,45 +440,12 @@ function runDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefinition {
       const waitMs = typeof args.timeout_ms === 'number' ? args.timeout_ms : config.timeoutMs
 
       if (mode === 'async') {
-        const jobs = ctx.get('jobs') as JobsService | undefined
+        const jobs = ctx.get('jobs') as JobRegistry | undefined
         if (jobs === undefined) {
           throw new Error('comfyui_run: background jobs unavailable — load @deepseek-ai/dsh-jobs-local and @deepseek-ai/dsh-tool-jobs')
         }
-        const jobId = jobs.start({
-          kind: 'comfyui',
-          label,
-          ...(exec.agent !== undefined ? { owner: exec.agent } : {}),
-          run: () => {
-            const startedAt = Date.now()
-            const done = (async () => {
-              try {
-                const entry = await client.waitForCompletion({
-                  promptId,
-                  timeoutMs: waitMs,
-                  pollIntervalMs: config.pollIntervalMs,
-                  signal: new AbortController().signal,
-                })
-                const items = collectMedia({ promptId, entry, maxItems: config.maxMediaItems, proxyBase: runtime.proxyBase() })
-                const result: RunResult = {
-                  kind: 'sync',
-                  promptId,
-                  status: 'completed',
-                  elapsedMs: Date.now() - startedAt,
-                  media: items,
-                  summary: summarizeMedia(items),
-                }
-                return { status: 'completed' as const, output: JSON.stringify(result) }
-              } catch (error) {
-                runtime.untrack(promptId)
-                const message = error instanceof Error ? error.message : String(error)
-                return { status: 'failed' as const, detail: 'comfyui', output: message }
-              }
-            })()
-            return {
-              cancel: () => { void client.interrupt().catch(() => undefined) },
-              done,
-            }
-          },
+        const jobId = startBackgroundRun({
+          jobs, runtime, client, config, promptId, label, waitMs, owner: exec.agent?.id,
         })
         const result: BackgroundResult = { kind: 'background', jobId, promptId, label }
         return result
@@ -822,45 +855,12 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
       }
       const waitMs = typeof args.timeout_ms === 'number' ? args.timeout_ms : config.timeoutMs
       if (mode === 'async') {
-        const jobs = ctx.get('jobs') as JobsService | undefined
+        const jobs = ctx.get('jobs') as JobRegistry | undefined
         if (jobs === undefined) {
           throw new Error('comfyui_workflow: background jobs unavailable — load @deepseek-ai/dsh-jobs-local and @deepseek-ai/dsh-tool-jobs')
         }
-        const jobId = jobs.start({
-          kind: 'comfyui',
-          label: saved.name,
-          ...(exec.agent !== undefined ? { owner: exec.agent } : {}),
-          run: () => {
-            const startedAt = Date.now()
-            const done = (async () => {
-              try {
-                const entry = await client.waitForCompletion({
-                  promptId,
-                  timeoutMs: waitMs,
-                  pollIntervalMs: config.pollIntervalMs,
-                  signal: new AbortController().signal,
-                })
-                const items = collectMedia({ promptId, entry, maxItems: config.maxMediaItems, proxyBase: runtime.proxyBase() })
-                const result: RunResult = {
-                  kind: 'sync',
-                  promptId,
-                  status: 'completed',
-                  elapsedMs: Date.now() - startedAt,
-                  media: items,
-                  summary: summarizeMedia(items),
-                }
-                return { status: 'completed' as const, output: JSON.stringify(result) }
-              } catch (error) {
-                runtime.untrack(promptId)
-                const message = error instanceof Error ? error.message : String(error)
-                return { status: 'failed' as const, detail: 'comfyui', output: message }
-              }
-            })()
-            return {
-              cancel: () => { void client.interrupt().catch(() => undefined) },
-              done,
-            }
-          },
+        const jobId = startBackgroundRun({
+          jobs, runtime, client, config, promptId, label: saved.name, waitMs, owner: exec.agent?.id,
         })
         return { action: 'run', id, workflowName: saved.name, background: { kind: 'background', jobId, promptId, label: saved.name } }
       }

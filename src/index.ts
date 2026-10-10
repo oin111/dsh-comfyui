@@ -61,23 +61,14 @@ interface CredentialsService {
   resolve(ref: string): Promise<{ value: string; source: string } | undefined>
 }
 
-/** Structural slice of the settings service. `installSection` arrived with
- * the 0.1.2 line and is checked at runtime: some hosts report a settings
- * service without it (Issue #4 — the client still renders the section, but a
- * save would fail with "namespace not registered"), and a throwing inject
- * callback must never take the plugin down. */
+/** Structural slice of the dsh 0.2 settings service. Forms are projected from
+ * the `.volatile()` Config fields; a save commits into the running references
+ * and arrives as `loader/volatile-update`. */
 interface SettingsService {
   readonly writable: boolean
   update(ns: unknown, patch: Record<string, unknown>): Promise<void>
-  /** dsh 0.1.7+: page policy for a plugin instance; returns the disposer. */
+  /** Page policy for a plugin instance; returns the disposer. */
   configure?(presentation: { auto?: boolean }, owner: Context['fiber']): () => void
-  installSection?(
-    ctx: Context,
-    ns: string,
-    schema: unknown,
-    initial: unknown,
-    hooks: { setSource: (current: unknown) => void; onChange: () => void },
-  ): unknown
 }
 
 async function resolveApiKey(ctx: Context, envName: string): Promise<string | undefined> {
@@ -91,6 +82,22 @@ async function resolveApiKey(ctx: Context, envName: string): Promise<string | un
     }
   }
   return process.env[envName]
+}
+
+/**
+ * The origin the web server is reachable at when no browser has reported one.
+ * dsh 0.2.1 binds one concrete address (wildcards are rejected), so that
+ * address is the answer; only a wildcard bind (older hosts) falls back to
+ * guessing a LAN interface. A guessed LAN IP is wrong for a loopback-only
+ * server, which is the default.
+ */
+export function bindOrigin(host: string | undefined, port: number): string {
+  const bound = host === undefined || host === '' ? '127.0.0.1' : host
+  if (bound === '0.0.0.0' || bound === '::' || bound === '[::]') {
+    return detectLanOrigin(port) ?? `http://127.0.0.1:${port}`
+  }
+  const literal = bound.includes(':') && !bound.startsWith('[') ? `[${bound}]` : bound
+  return `http://${literal}:${port}`
 }
 
 /** Default plugin data directory under the harness home. */
@@ -182,10 +189,7 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
       if (hinted !== undefined) return hinted
       const ws = ctx.get('webServer') as { port?: number; host?: string } | undefined
       if (ws === undefined || ws.port === undefined) return undefined
-      const lan = detectLanOrigin(ws.port)
-      if (lan !== undefined) return lan
-      const host = ws.host === '0.0.0.0' ? '127.0.0.1' : ws.host ?? '127.0.0.1'
-      return `http://${host}:${ws.port}`
+      return bindOrigin(ws.host, ws.port)
     },
     settingsWritable: () => {
       const settings = ctx.get('settings') as SettingsService | undefined
@@ -355,26 +359,12 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
     },
   }
 
-  // The settings section rides the plugin fiber: a host without a settings
-  // service simply never registers it, and the entry config stands as composed.
-  let source: () => ConfigType = () => resolved
+  // dsh 0.2: settings forms are projected from the volatile Config fields and a
+  // save arrives through `loader/volatile-update` above. This plugin ships its
+  // own settings page, so opt out of the auto-generated one. A host without a
+  // settings service never runs this fiber; the entry config stands as composed.
   ctx.inject(['settings'], (settingsCtx) => {
-    const settings = settingsCtx.settings as SettingsService
-    if (typeof settings.installSection === 'function') {
-      // dsh 0.1.2–0.1.5: the section registry keeps its own copy of the values.
-      settings.installSection(ctx, COMFYUI_NS, Config, resolved, {
-        setSource: (current) => {
-          source = current as () => ConfigType
-        },
-        onChange: () => {
-          refreshConfig(resolveConfig(source() as Partial<Record<keyof ConfigType, unknown>>, defaultDataDir()))
-        },
-      })
-      return
-    }
-    // dsh 0.1.7+: forms are projected from the volatile Config fields and a
-    // save arrives through loader/volatile-update above. This plugin ships its
-    // own settings page, so opt out of any auto-generated one.
+    const settings = settingsCtx.settings as unknown as SettingsService
     if (typeof settings.configure === 'function') {
       const configure = settings.configure.bind(settings)
       settingsCtx.effect(() => configure({ auto: false }, ctx.fiber), 'dsh-comfyui: settings page policy')

@@ -45,11 +45,12 @@ interface ToolResultNode {
   meta?: unknown
 }
 
-/** Running tool-call node (structural slice). */
+/** Running tool-call node (structural slice). `argsRaw` is absent while the
+ * call is still `preparing` (arguments streaming in). */
 interface RunningToolCall {
   callId: string
   name: string
-  argsRaw: string
+  argsRaw?: string
 }
 
 type Block = ToolResultNode | RunningToolCall
@@ -64,7 +65,8 @@ export interface ComfyUICardProps {
   block: Block
 }
 
-function parseArgs(raw: string): Record<string, unknown> {
+function parseArgs(raw: string | undefined): Record<string, unknown> {
+  if (typeof raw !== 'string' || raw === '') return {}
   try {
     const parsed = JSON.parse(raw)
     return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {}
