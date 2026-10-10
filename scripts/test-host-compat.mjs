@@ -317,5 +317,20 @@ await test('presentationMeta is pure JSON for sync and background results', asyn
   })
 })
 
+await test('comfyui_run declares a typed output schema the host accepts and enforces', async () => {
+  const { assertSupportedJsonSchema, validateJsonSchemaValue } = await import('@deepseek-ai/dsh-tools')
+  await withPlugin({}, async ({ host }) => {
+    const run = host.tools.get('comfyui_run')
+    const schema = run.output.schema
+    assertSupportedJsonSchema(schema)
+    assert.ok(Array.isArray(schema.oneOf) && schema.oneOf.length === 2, 'sync | background union')
+    for (const args of [{ template: 'txt2img' }, { template: 'txt2img', mode: 'async' }]) {
+      const value = await run.execute(args, execFor())
+      assert.deepEqual(validateJsonSchemaValue(schema, JSON.parse(JSON.stringify(value))), [])
+    }
+    assert.ok(validateJsonSchemaValue(schema, { kind: 'background' }).length > 0, 'incomplete value is rejected')
+  })
+})
+
 console.log(`\n${passed} passed, ${failures} failed`)
 process.exit(failures === 0 ? 0 : 1)

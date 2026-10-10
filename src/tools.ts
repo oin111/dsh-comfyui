@@ -386,6 +386,38 @@ async function waitSync(
   }
 }
 
+/**
+ * Canonical output of `comfyui_run`, enforced by the host on every success and
+ * rendered into the PTC SDK declarations, so `run_code` programs see
+ * `jobId` / `media` instead of an opaque record.
+ */
+const RUN_RESULT_SCHEMA = {
+  oneOf: [
+    {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', const: 'sync' },
+        promptId: { type: 'string' },
+        status: { type: 'string', enum: ['completed', 'interrupted'] },
+        elapsedMs: { type: 'number' },
+        media: { type: 'array', items: { type: 'object', description: 'One output: filename, subfolder, type, kind, url, metadata.' } },
+        summary: { type: 'string' },
+      },
+      required: ['kind', 'promptId', 'status', 'elapsedMs', 'media', 'summary'],
+    },
+    {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', const: 'background' },
+        jobId: { type: 'string', description: 'Background job id; collect with job_output.' },
+        promptId: { type: 'string' },
+        label: { type: 'string' },
+      },
+      required: ['kind', 'jobId', 'promptId', 'label'],
+    },
+  ],
+} as const
+
 function runDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefinition {
   return {
     name: 'comfyui_run',
@@ -409,7 +441,7 @@ function runDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefinition {
       required: [],
     },
     output: {
-      schema: { type: 'object' },
+      schema: RUN_RESULT_SCHEMA,
       render: renderRunResult,
       presentationMeta(_args, value) {
         const result = value as RunResult | BackgroundResult
