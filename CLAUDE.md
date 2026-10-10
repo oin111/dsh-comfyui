@@ -6,9 +6,9 @@
 
 `dsh-comfyui` 是 **DeepSeek Harness (DSH / cordis) 的 ComfyUI 插件**：让 Agent 通过工具直接驱动 ComfyUI 生成、处理图像与视频，并在浏览器端提供工作流库 / 资产 / 队列面板、对话内媒体卡片和设置页。
 
-- 包名 `dsh-comfyui`，ESM（`"type": "module"`），Node ≥ 22.19，MIT。
-- 入口：host 侧 `lib/index.js`（由 `src/*.ts` 经 tsc 编译）；浏览器侧 `client/client.js`（由 `src/client/*` 经 tsdown 打包）。
-- peer 依赖：`@deepseek-ai/cordis`（必需）、`@deepseek-ai/dsh-settings`（`^0.1.2-alpha.4 || ^0.1.5-alpha.1 || ^0.1.6-alpha.1 || ^0.1.7-alpha.1`——semver 的预发布版只匹配同一 x.y.z，所以每条宿主线都要单列，**必选**——0.4.0 起摘掉 optional，老宿主安装会触发 dshmarket 风险横幅而非静默降级）。运行时依赖只有 `@deepseek-ai/schemastery`。
+- 包名 `@oin111/dsh-comfyui`（fandc520/dsh-comfyui 的分支），ESM（`"type": "module"`），Node ≥ 22.19，MIT。
+- 入口：host 侧 `lib/index.js`（由 `src/*.ts` 经 tsc 编译）；浏览器侧 `client/client.js`（由 `src/client/*` 经 tsdown 打包，banner 的模块 id 取自 package.json 的 `name`）。
+- peer 依赖：`@deepseek-ai/cordis`、`@deepseek-ai/dsh-settings`（`>=0.2.0-rc.2 <0.3.0-0`——宿主的安装闸门用 `includePrerelease` 判定，一个区间即可覆盖 0.2 线所有预发布版）。类型基线（devDependencies）：`dsh-settings` / `dsh-tools` / `dsh-jobs` 0.2.0-rc.2。运行时依赖只有 `@deepseek-ai/schemastery` 与 `fflate`。
 - `cordis.patch.yml` 把插件以 `id: comfyui` 插入 profile 层栈；`package.json` 的 `dsh` 字段声明 bundle patch 与 client 平台/注入。
 
 ## 常用命令
@@ -57,7 +57,7 @@ Agent ──tools──┐
 
 | 文件 | 职责 |
 | --- | --- |
-| `index.ts` | 插件入口：解析配置、组装 `ComfyUIRuntime`、注册设置节 / 工具 / skill / 路由 / 媒体代理，全部挂在 fiber 上随插件卸载。`export const inject = ['tools']`。设置有两代宿主：dsh 0.1.2–0.1.5 经 `ctx.inject(['settings'])` 子 fiber 调 `settings.installSection(ctx, 'comfyui', Config, resolved, { setSource, onChange })`；dsh 0.1.7+ 没有 `installSection`，设置服务只编辑 Config 里 `.volatile()` 的字段（写进 profile 的 `cordis.patch.yml`），Loader 就地更新引用后发 `loader/volatile-update`，插件据此 `resolveConfig` 重读并在 `baseUrl` 变化时重连进度 WS（#11）；同时 `settings.configure({ auto: false }, ctx.fiber)` 声明自带设置页。settings 是可选服务，无该服务的 headless 宿主静默跳过；命名空间就是 profile 条目 id `'comfyui'`。 |
+| `index.ts` | 插件入口：解析配置、组装 `ComfyUIRuntime`、注册设置节 / 工具 / skill / 路由 / 媒体代理，全部挂在 fiber 上随插件卸载。`export const inject = ['tools']`。设置（dsh 0.2）：设置服务只编辑 Config 里 `.volatile()` 的字段（写进 profile 的 `cordis.patch.yml`），Loader 就地更新引用后发 `loader/volatile-update`，插件据此 `resolveConfig` 重读并在 `baseUrl` 变化时重连进度 WS；同时 `settings.configure({ auto: false }, ctx.fiber)` 声明自带设置页。0.1.2–0.1.5 的 `installSection` 分支已删除。媒体基址兜底用 webServer 的绑定地址（`bindOrigin`），仅通配绑定才猜 LAN IP。settings 是可选服务，无该服务的 headless 宿主静默跳过；命名空间就是 profile 条目 id `'comfyui'`。 |
 | `config.ts` | schemastery 配置 schema（同时供 cordis.yml 入口配置和设置页使用）+ 同形状的 TS 类型 + `resolveConfig`（把可能是 volatile 引用的字段解成普通对象，全插件只读这一个 `resolved`）。运行时读取的字段标 `.volatile()`（baseUrl/apiKeyEnv/超时/轮询/媒体上限/skillsDir/mediaHost/comfyuiDirs），`dataDir`/`maxAssets`/`outputDir` 保持普通字段（改了会重启插件）；需 schemastery ≥ 3.18.4。`outputDir` 只走 cordis.yml，留空时删除资产会自行推断 ComfyUI 输出目录。`skillsDir` 指定技能包根目录（留空 = `<dataDir>/skills`，必须绝对路径，相对值忽略；运行时经 getter 现读，设置页改完即生效，但不会自动搬走已有目录）。`comfyuiDirs`（字符串数组，可多填）记录用户本机 ComfyUI 安装目录（目录映射/多实例/便携版），Agent 据此定位 models、自定义节点、TTS 音色库等文件；变更经 `onChange` 热同步到 runtime 配置，无需重启。 |
 | `comfyui.ts` | ComfyUI HTTP 客户端：queuePrompt / history / queue / jobs / userdata / object_info / view / upload / interrupt 等，加上 `collectMedia`、`mediaProxyUrl`、`waitForCompletion`。上传有两个入口：`uploadFile` 转发浏览器原样的 multipart，`uploadMedia` 用 FormData 包好字节再传（`/upload/image` 只吃 multipart，裸 body 会 400）。模块级 `CLIENT_ID` 让排队与 WS 进度同源。路由前缀按 baseUrl 自学习（模块级 `routePrefix`）：裸路由 404 时重试 `/api` 前缀，成功就记住——兼容只转发 `/api/*` 的反代（comfy-api-proxy，#6）；`listUserData` 在 `/v2/userdata` 404 时回退 v1 `/userdata?dir=…&recurse=true&full_info=true`（#5）。 |
 | `store.ts` | 持久化：工作流库、资产索引、加载区加载位（`LoadSlot[]`，`null` = 空位，兼容旧的单图格式）、媒体尺寸、上传哈希、任务跟踪，均为 dataDir 下的 JSON 文件；`skillsRoot` 指向技能包目录树，`updateWorkflowSkill` 单独维护 `skillDir` / `requireSkill`（普通保存不碰这两个字段）。 |
@@ -140,6 +140,7 @@ Agent ──tools──┐
 | `test-store-params.mjs` | 离线自测：参数经 store 保存 → 重载 → 编辑后仍保留（需先 `npm run build`，它导入 `lib/store.js`） |
 | `test-skillpack.mjs` | 离线自测：技能包 slug / frontmatter / 文件 CRUD / 尺寸上限 / 路径穿越防护 / 工作流绑定（需先 `npm run build`，它导入 `lib/skillpack.js`） |
 | `test-convert.mjs` | 离线自测：画布分析与图→API 转换——DynamicCombo 扁平（#10）、bypass 直通与越界引用拒绝（#8）、Set/Get 按名配对（作用域、链式、直通输出、缺 setter）、rgthree Relay/Repeater 连线丢弃（#8）（需先 `npm run build`，它导入 `lib/analyze.js`、`lib/convert.js`） |
+| `test-host-compat.mjs` | 离线自测（dsh 0.2 宿主契约）：peer 区间对 0.2 线放行、对 0.1.x/0.2.0-rc.1/0.3 拒绝；patch name / banner id 与包名一致；`./icon` 导出；用桩宿主 + 桩 ComfyUI 驱动 `apply`：4 个工具、设置只走 0.2 路径、async 的 owner/result 契约、取消只作用于本 prompt 且停止轮询、同步中止、媒体基址、presentationMeta 纯 JSON、输出 schema。`npm test` 跑全部离线自测 |
 | `test-transfer.mjs` | 离线自测：预设导出→分析→导入回环（参数/技能包字节/空目录/requireSkill 逐项断言）、重名 `（导入）` 后缀、zip-slip 防护、格式与版本拒绝（需先 `npm run build`，它导入 `lib/transfer.js`） |
 | `run-cg-portrait.mjs` / `run-16x9.mjs` | 真机冒烟：打同源路由（默认 `http://127.0.0.1:3080`）跑一次带自定义 prompt 的工作流，需 DSH + ComfyUI 都在运行 |
 
@@ -148,6 +149,8 @@ Agent ──tools──┐
 14. **删工作流不默认删技能包**：技能包是用户手写的文档，没有别的副本。`workflows/delete` 只在 body 显式带 `deleteSkill: true` 时销毁目录，面板在有技能包时会先问"一起删/只删工作流"。停用（`disable`）同理，只清 `skillDir` 字段、留着目录。
 
 15. **DynamicCombo V3 在 API prompt 里是扁平的**：主输入的值 = 选中项的 key 字符串，子控件以 `master.sub` 为同级键（如 `codec: "auto"`、`aspect_ratio.size`）。服务端自己重组嵌套结构；包成 `{ key, inputs }` 会匹配不上、输入被丢弃，节点在 `execute()` 才报 `missing ... 'codec'`（#10，视频要白跑整轮才发现）。`params.ts` 的 combo 子参数也按扁平键工作。
+16. **后台任务（dsh 0.2 jobs 契约）**：`startBackgroundRun`（`src/tools.ts`）是两个工具 `mode: "async"` 的唯一入口。`owner` 传 `exec.agent.id`（SessionId，传 Agent 句柄会被拒）；`done` 返回 `{ status, result }`——宿主只读 `result`，旧的 `output` 字段被忽略（0.1.7+ 上 `job_output` 因此为空）。`cancel` 中止轮询并调 `client.cancelPrompt(promptId)`：出队 + 带 `prompt_id` 的 `/interrupt`。**工具路径禁止裸 `/interrupt`**——它会打断 ComfyUI 正在跑的任何 prompt，包括别的客户端的。同步等待被中止时同理，返回 `status: 'interrupted'`。
+17. **`comfyui_run` 的输出 schema 是真约束**：`RUN_RESULT_SCHEMA`（sync | background 的 `oneOf`）由宿主对每次成功结果校验，并生成 PTC SDK 的类型声明；改结果形状必须同步改 schema（子集：`const`/`enum` 需带 `type`）。`npm test` 里的 host-compat 用宿主自己的 `assertSupportedJsonSchema`/`validateJsonSchemaValue` 校验。
 
 ## 代码风格约定
 

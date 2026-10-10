@@ -1,4 +1,4 @@
-# dsh-comfyui
+# @oin111/dsh-comfyui
 
 [English](README.en.md) | **中文**
 
@@ -10,20 +10,15 @@
 
 <p align="center">让 DeepSeek Harness 的 Agent 智能驱动本地或远程 ComfyUI 生成任何内容。附带工作流、资产管理面板与技能包管理挂载。配套 skill 与同源媒体代理。</p>
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/dsh-comfyui"><img src="https://img.shields.io/npm/v/dsh-comfyui" alt="npm version" /></a>
-  <a href="https://www.npmjs.com/package/dsh-comfyui"><img src="https://img.shields.io/npm/dm/dsh-comfyui" alt="npm downloads" /></a>
-  <img src="https://img.shields.io/npm/l/dsh-comfyui" alt="license" />
-</p>
 
-> **版本配对（选对 dsh 版本再装，否则 dshmarket 会报风险提示）**：
+> **这是 [fandc520/dsh-comfyui](https://github.com/fandc520/dsh-comfyui) 的分支 `@oin111/dsh-comfyui`，面向 DeepSeek Harness 0.2.x。**
 >
-> | dsh-comfyui | 配对的 DeepSeek Harness | 说明 |
+> | 版本 | 配对的 DeepSeek Harness | 说明 |
 > | --- | --- | --- |
-> | **0.5.x（最新，`latest` tag）** | **≥ 0.1.2**（含 0.1.5 / 0.1.6 / 0.1.7 预发布版） | 0.5.3 起兼容 dsh 0.1.7 的设置机制（设置页保存直接生效，无需重启） |
-> | **0.3.x（beta 线，`beta` tag）** | **0.1.1** | 老版本 dsh 请留在 0.3.x 线 |
+> | **@oin111/dsh-comfyui 0.6.x** | **0.2.0-rc.2 ～ 0.2.x**（含 0.2.1 alpha） | 后台任务按 0.2 契约（owner = SessionId，结果走 `result`）；取消只作用于本插件的 prompt；PTC 模式可用 |
+> | 上游 dsh-comfyui 0.5.x | 0.1.2 ～ 0.1.7 | 老宿主请用上游 |
 >
-> 安装：`dsh plugin --profile web add dsh-comfyui`（装最新 0.5.x）/ `dsh plugin --profile web add dsh-comfyui@beta`（老宿主装 0.3.x）。
+> 安装：`dsh plugin --profile web add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.0/oin111-dsh-comfyui-0.6.0.tgz`
 
 ## 功能
 
@@ -80,9 +75,9 @@ DH 设置页新增 "ComfyUI" 分区：服务器地址、API Key 环境变量名�
 
 ```sh
 # web profile
-dsh plugin --profile web add dsh-comfyui
+dsh plugin --profile web add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.0/oin111-dsh-comfyui-0.6.0.tgz
 # desktop profile
-dsh plugin --profile desktop add dsh-comfyui
+dsh plugin --profile desktop add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.0/oin111-dsh-comfyui-0.6.0.tgz
 ```
 
 重启应用后：侧边栏出现面板入口，设置页出现 "ComfyUI" 分区，Agent 立即获得全部工具与配套 skill。
