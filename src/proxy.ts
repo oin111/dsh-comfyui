@@ -13,6 +13,10 @@ import { guessContentType } from './comfyui.js'
 import type { ComfyUIMediaRef } from './comfyui.js'
 import { errorMessage, sendJson } from './http.js'
 import type { ComfyUIRuntime } from './tools.js'
+import type { RouteRegistrar } from './guard.js'
+
+/** Media types that cannot execute in the app origin. */
+const PASSIVE_MEDIA = /^(image\/(png|jpeg|webp|gif|bmp|avif)|video\/[a-z0-9.+-]+|audio\/[a-z0-9.+-]+)$/
 
 /**
  * Relay one ComfyUI /view download to the browser in streaming fashion.
@@ -30,11 +34,20 @@ async function relayViewStream(
 ): Promise<void> {
   const requestMethod: 'GET' | 'HEAD' = request.method === 'HEAD' ? 'HEAD' : 'GET'
   const { status, headers, body } = await client.fetchViewStreamed(ref, request.headers.range, requestMethod)
+  const upstreamType = (headers.get('content-type') ?? guessContentType(ref.filename)).split(';')[0]?.trim().toLowerCase() ?? ''
+  const passive = PASSIVE_MEDIA.test(upstreamType)
   const head: Record<string, string | number> = {
-    'content-type': headers.get('content-type') ?? guessContentType(ref.filename),
+    // ComfyUI output is not ours to trust (remote, compromised, or old
+    // servers can answer text/html or SVG): only passive media types pass,
+    // anything else downloads as opaque bytes, and the sandbox CSP blocks
+    // script even if a browser renders it.
+    'content-type': passive ? upstreamType : 'application/octet-stream',
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': "sandbox; default-src 'none'",
     'accept-ranges': 'bytes',
     'cache-control': 'private, max-age=3600',
   }
+  if (!passive) head['content-disposition'] = 'attachment'
   const contentLength = headers.get('content-length')
   if (contentLength !== null) head['content-length'] = contentLength
   const contentRange = headers.get('content-range')
@@ -51,17 +64,12 @@ async function relayViewStream(
  * Mount the media proxy route on the host web server.
  * @returns the disposer, or undefined when no web server is present.
  */
-export function mountComfyUIProxy(ctx: Context, runtime: ComfyUIRuntime): (() => void) | undefined {
-  const webServer = ctx.get('webServer') as {
-    register(route: { kind: string; path: string; handler(request: IncomingMessage, response: ServerResponse): void | Promise<void> }): () => void
-  } | undefined
-  if (webServer === undefined) return undefined
+export function mountComfyUIProxy(ctx: Context, runtime: ComfyUIRuntime, webServer: RouteRegistrar): () => void {
 
   return webServer.register({
     kind: 'exact',
     path: '/comfyui/media',
     handler: async (request, response) => {
-      runtime.hostHint.record(request)
       if (request.method !== 'GET' && request.method !== 'HEAD') {
         sendJson(response, 405, { error: 'method not allowed' })
         return

@@ -7,6 +7,7 @@
  */
 import { createElement as h, useEffect, useState } from 'react'
 import { Lightbox } from './lightbox.js'
+import { safeUrl } from './url.js'
 
 interface MediaItem {
   filename: string
@@ -99,14 +100,14 @@ function MediaItem({ item, t, onOpen }: {
   const [size, setSize] = useState<{ width: number; height: number } | null>(null)
   const [failed, setFailed] = useState(false)
   const media = item.kind === 'video'
-    ? h('video', { src: item.url, controls: true, preload: 'metadata' })
+    ? h('video', { src: safeUrl(item.url), controls: true, preload: 'metadata' })
     : item.kind === 'audio'
-      ? h('audio', { src: item.url, controls: true, preload: 'metadata' })
+      ? h('audio', { src: safeUrl(item.url), controls: true, preload: 'metadata' })
       : item.kind === 'image'
         ? failed
           ? h('span', { className: 'dsc-media-other' }, `${item.filename}（${t('cardLoadFailed')}）`)
           : h('img', {
-              src: item.url,
+              src: safeUrl(item.url),
               alt: item.filename,
               loading: 'lazy',
               className: 'dsc-media-img dsc-media-img--clickable',
@@ -128,7 +129,7 @@ function MediaItem({ item, t, onOpen }: {
       size !== null
         ? h('span', { className: 'dsc-media-size' }, `${size.width}×${size.height}${ratio !== '' ? ` · ${ratio}` : ''}`)
         : null,
-      h('a', { href: item.url, download: item.filename, target: '_blank', rel: 'noreferrer' }, t('cardDownload')),
+      h('a', { href: safeUrl(item.url), download: item.filename, target: '_blank', rel: 'noreferrer' }, t('cardDownload')),
     ),
   )
 }

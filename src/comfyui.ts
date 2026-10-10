@@ -103,6 +103,14 @@ export class ComfyUIError extends Error {
   }
 }
 
+/** A wait that ended because the caller cancelled it (not a server failure). */
+export class ComfyUIInterruptedError extends ComfyUIError {
+  readonly interrupted = true
+  constructor(promptId: string) {
+    super(`ComfyUI generation interrupted (prompt ${promptId})`)
+  }
+}
+
 function sleep(millis: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
@@ -459,10 +467,6 @@ export class ComfyUIClient {
     return this.request<{ system?: { comfyui_version?: string } }>('/system_stats')
   }
 
-  /** Ask ComfyUI to interrupt the running prompt. */
-  async interrupt(): Promise<void> {
-    await this.request<unknown>('/interrupt', { method: 'POST' })
-  }
 
   /** Download one generated media file through GET /view. */
   async fetchView(ref: ComfyUIMediaRef): Promise<{ bytes: Uint8Array; contentType: string }> {
@@ -524,22 +528,28 @@ export class ComfyUIClient {
   }
 
   /**
-   * Poll history until the prompt completes, fails, or the budget/signal ends.
-   * Interrupts the server when the signal aborts before throwing.
-   */
-  /**
    * Cancel one prompt without touching anyone else's work: drop it from the
-   * pending queue and interrupt it only if it is the one running. A bare
-   * `POST /interrupt` would stop whatever prompt the server is executing,
-   * including another client's. Both calls are best-effort.
+   * pending queue, then interrupt only if the server reports it as the one
+   * running. The interrupt also carries `prompt_id` (servers that support it
+   * re-check), but older servers ignore that field and would stop whatever
+   * runs, so the queue check is what keeps other clients safe. Best-effort.
    */
   async cancelPrompt(promptId: string): Promise<void> {
-    await Promise.allSettled([
-      this.deleteQueueItems([promptId]),
-      this.interruptPrompt(promptId),
-    ])
+    await this.deleteQueueItems([promptId]).catch(() => undefined)
+    let running = false
+    try {
+      const queue = await this.getQueue()
+      running = queue.queue_running.some((item) => item.prompt_id === promptId)
+    } catch {
+      running = false
+    }
+    if (running) await this.interruptPrompt(promptId).catch(() => undefined)
   }
 
+  /**
+   * Poll history until the prompt completes, fails, or the budget/signal ends.
+   * Cancels only this prompt (cancelPrompt) when the signal aborts, then throws ComfyUIInterruptedError.
+   */
   async waitForCompletion(opts: {
     promptId: string
     timeoutMs: number
@@ -552,7 +562,7 @@ export class ComfyUIClient {
     const deadline = Date.now() + timeoutMs
     const interrupted = async (): Promise<never> => {
       await this.cancelPrompt(promptId)
-      throw new ComfyUIError(`ComfyUI generation interrupted (prompt ${promptId})`)
+      throw new ComfyUIInterruptedError(promptId)
     }
     for (;;) {
       if (signal.aborted) return interrupted()

@@ -6,8 +6,9 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { errorMessage, readJsonBody, readRawBody, sameOrigin, sendJson } from './http.js'
+import { BodyTooLargeError, errorMessage, readJsonBody, readRawBody, sameOrigin, sendJson } from './http.js'
 import type { ComfyUIRuntime } from './tools.js'
+import type { RouteRegistrar } from './guard.js'
 import { analyzeWorkflowParameters, comboChildInfo, inputOptions, numberSpecOf, refreshParameterMetadata, uploadKindOf, type Workflow } from './params.js'
 import { collectMedia, historyErrorMessage, mediaProxyUrl, type ComfyUIMediaRef } from './comfyui.js'
 import type { AssetRecord } from './store.js'
@@ -60,19 +61,11 @@ function healAssetUrls(assets: AssetRecord[]): AssetRecord[] {
  * another host, for instance — deletion degrades to dropping the index
  * record and says so.
  */
-function resolveOutputDir(configured: string, assets: AssetRecord[]): string | undefined {
+export function resolveOutputDir(configured: string, _assets: Array<{ media: unknown[] }>): string | undefined {
+  // Only an operator-configured directory is trusted. Inferring the root from
+  // a server-reported `fullpath` let a hostile or compromised ComfyUI pick the
+  // directory we unlink in (e.g. fullpath=/home/u/.ssh/id_rsa, subfolder=.ssh).
   if (configured !== '' && isAbsolute(configured)) return resolve(configured)
-  for (const asset of assets) {
-    for (const item of asset.media) {
-      const full = (item as { fullpath?: unknown }).fullpath
-      if (typeof full !== 'string' || full === '' || item.filename === '') continue
-      const tail = item.subfolder !== '' ? `${item.subfolder}/${item.filename}` : item.filename
-      const normalized = full.replace(/\\/g, '/')
-      if (!normalized.endsWith(tail)) continue
-      const root = normalized.slice(0, normalized.length - tail.length).replace(/[/]+$/, '')
-      if (root !== '') return resolve(root)
-    }
-  }
   return undefined
 }
 
@@ -95,6 +88,9 @@ async function deleteOutputFile(outputDir: string, ref: { filename: string; subf
     throw error
   }
 }
+
+/** Pack files that may render inline: inert raster formats only. */
+const INLINE_RASTER = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp', 'image/avif'])
 
 const VIDEO_EXT = /\.(mp4|webm|mov|mkv|avi|m4v)$/i
 const AUDIO_EXT = /\.(mp3|wav|ogg|flac|m4a|aac|opus)$/i
@@ -196,22 +192,14 @@ async function readSameOriginPost(request: IncomingMessage, response: ServerResp
  * Mount every dsh-comfyui route on the host web server.
  * @returns the disposer, or undefined when no web server is present.
  */
-export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime): (() => void) | undefined {
-  const webServer = ctx.get('webServer') as {
-    register(route: { kind: string; path: string; handler(request: IncomingMessage, response: ServerResponse): void | Promise<void> }): () => void
-  } | undefined
-  if (webServer === undefined) return undefined
+export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webServer: RouteRegistrar): () => void {
 
-  // Record the browser's request origin on every route so media URLs can use
-  // the address the browser actually reached (loopback, LAN IP, or domain).
+  // The registrar (guard.ts) already authenticates each request and records
+  // the host hint for admitted ones; kept as a named pass-through so every
+  // route reads the same.
   const withHint = (
     handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>,
-  ): ((request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => {
-    return (request, response) => {
-      runtime.hostHint.record(request)
-      return handler(request, response)
-    }
-  }
+  ): ((request: IncomingMessage, response: ServerResponse) => void | Promise<void>) => handler
 
   const disposers: Array<() => void> = []
 
@@ -614,6 +602,10 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime): (() =
         sendJson(response, 405, { error: 'method not allowed' })
         return
       }
+      if (!sameOrigin(request)) {
+        sendJson(response, 403, { error: 'forbidden: same-origin requests only' })
+        return
+      }
       const contentType = request.headers['content-type'] ?? ''
       if (!contentType.startsWith('multipart/form-data')) {
         sendJson(response, 400, { error: 'multipart/form-data required' })
@@ -622,11 +614,12 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime): (() =
       try {
         // Forward the multipart body verbatim (field "image" matches ComfyUI's
         // /upload/image contract); the browser never talks to ComfyUI directly.
-        const raw = await readRawBody(request)
+        const raw = await readRawBody(request, runtime.getConfig().maxMediaBytes + 64 * 1024)
         const client = runtime.createClient(await runtime.getApiKey())
         const result = await client.uploadFile(new Uint8Array(raw), contentType)
         sendJson(response, 200, { ok: true, name: result.name ?? '' })
       } catch (error) {
+        if (error instanceof BodyTooLargeError) throw error
         sendJson(response, 502, { error: errorMessage(error) })
       }
     }),
@@ -843,7 +836,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime): (() =
         return
       }
       try {
-        const raw = await readRawBody(request)
+        const raw = await readRawBody(request, MAX_ASSET_BYTES + 1)
         if (raw.length === 0) {
           sendJson(response, 200, { ok: false, error: '文件为空' })
           return
@@ -859,6 +852,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime): (() =
           ? { ok: true, enabled: true, path: result.value.path, pack: result.value.pack }
           : { ok: false, error: result.error })
       } catch (error) {
+        if (error instanceof BodyTooLargeError) throw error
         sendJson(response, 200, { ok: false, error: errorMessage(error) })
       }
     }),
@@ -929,14 +923,18 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime): (() =
         sendJson(response, 404, { error: file.error })
         return
       }
+      // Pack files are user/model-written content served from the app origin.
+      // Only raster images render inline; everything else (SVG, HTML, text,
+      // scripts) downloads, and a sandbox CSP strips script execution even if
+      // a browser renders it anyway.
+      const inline = INLINE_RASTER.has(file.value.contentType)
       response.writeHead(200, {
-        'content-type': file.value.contentType,
+        'content-type': inline ? file.value.contentType : 'application/octet-stream',
         'content-length': String(file.value.bytes.length),
         'cache-control': 'no-store',
-        // Pack files are user content served from the app origin; never let a
-        // browser sniff one into something executable.
         'x-content-type-options': 'nosniff',
-        'content-disposition': 'inline',
+        'content-security-policy': "sandbox; default-src 'none'; img-src 'self' data:",
+        'content-disposition': inline ? 'inline' : 'attachment',
       })
       if (methodIs(request, 'HEAD')) response.end()
       else response.end(file.value.bytes)

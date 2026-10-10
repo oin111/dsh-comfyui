@@ -4,6 +4,7 @@
  * (assets/queue previews) and the tool card (result images).
  */
 import { createElement as h, useEffect } from 'react'
+import { safeUrl } from './url.js'
 
 export interface LightboxProps {
   t: (key: string, ...rest: unknown[]) => string
@@ -54,7 +55,7 @@ export function Lightbox({ t, images, kinds, index, onClose, onIndex }: Lightbox
       media,
       h('div', { className: 'dsc-lightbox-meta' },
         h('span', null, `${index + 1} / ${count}`),
-        h('a', { className: 'dsc-lightbox-download', href: src, download: '', target: '_blank', rel: 'noreferrer' }, t('cardDownload')),
+        h('a', { className: 'dsc-lightbox-download', href: safeUrl(src), download: '', target: '_blank', rel: 'noreferrer' }, t('cardDownload')),
       ),
       count > 1
         ? h('button', {

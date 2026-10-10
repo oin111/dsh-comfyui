@@ -4,6 +4,7 @@
 // checks the package manifest against the host's install-time gates.
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
+import { Writable } from 'node:stream'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -17,7 +18,9 @@ let failures = 0
 let passed = 0
 async function test(name, fn) {
   try {
-    await fn()
+    let timer
+    await Promise.race([fn(), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('test timed out (20s)')), 20_000) })])
+    clearTimeout(timer)
     passed += 1
     console.log(`ok   ${name}`)
   } catch (error) {
@@ -78,7 +81,7 @@ await test('package exports ./icon backed by a published file', async () => {
 
 // ---------------------------------------------------------------- stub ComfyUI
 
-function startComfy({ completeAfterPolls = 1 } = {}) {
+function startComfy({ completeAfterPolls = 1, foreignRunning = false, viewType = 'image/png' } = {}) {
   const calls = []
   const histories = new Map()
   let next = 0
@@ -111,6 +114,14 @@ function startComfy({ completeAfterPolls = 1 } = {}) {
         })
       }
       if (req.method === 'POST' && (req.url === '/queue' || req.url === '/interrupt')) return send(200, {})
+      if (req.method === 'GET' && req.url === '/queue') {
+        const running = [...histories.keys()].filter((id) => (histories.get(id) ?? 0) > 0 && completeAfterPolls === Infinity && !foreignRunning)
+        return send(200, { queue_running: (foreignRunning ? [[0, 'foreign-prompt']] : running.map((id, i) => [i, id])), queue_pending: [] })
+      }
+      if (req.method === 'GET' && req.url?.startsWith('/view')) {
+        res.writeHead(200, { 'content-type': viewType, 'content-disposition': 'attachment', 'x-content-type-options': 'nosniff' })
+        return res.end('<script>alert(1)</script>')
+      }
       if (req.method === 'GET' && req.url?.startsWith('/object_info')) return send(200, {})
       return send(404, { error: 'not found' })
     })
@@ -122,7 +133,7 @@ function startComfy({ completeAfterPolls = 1 } = {}) {
 
 // ---------------------------------------------------------------- stub host
 
-function stubHost({ settings, webServer, jobs } = {}) {
+function stubHost({ settings, webServer, jobs, connection } = {}) {
   const tools = new Map()
   const effects = []
   const listeners = new Map()
@@ -130,6 +141,7 @@ function stubHost({ settings, webServer, jobs } = {}) {
   if (settings !== undefined) services.settings = settings
   if (webServer !== undefined) services.webServer = webServer
   if (jobs !== undefined) services.jobs = jobs
+  if (connection !== undefined) services.connection = connection
   const ctx = {
     fiber: { label: 'stub-fiber' },
     logger: { info() {}, warn() {}, error() {}, debug() {} },
@@ -167,14 +179,16 @@ function jobHandle() {
 const plugin = await import(join(root, 'lib', 'index.js'))
 
 async function withPlugin(options, fn) {
+  if (options.jobsOverride !== undefined) options.host = { ...options.host, jobs: options.jobsOverride }
   const dataDir = await mkdtemp(join(tmpdir(), 'dsh-comfyui-test-'))
   const comfy = await startComfy(options.comfy)
   const jobs = stubJobs()
   const host = stubHost({ jobs, ...options.host })
+  const effectiveJobs = options.host?.jobs ?? jobs
   try {
     if (options.seed !== undefined) await options.seed(dataDir)
     await plugin.apply(host.ctx, { baseUrl: comfy.url, dataDir, pollIntervalMs: 200, ...options.config })
-    await fn({ host, comfy, jobs })
+    await fn({ host, comfy, jobs: effectiveJobs, dataDir })
   } finally {
     host.dispose()
     await comfy.close()
@@ -330,6 +344,178 @@ await test('comfyui_run declares a typed output schema the host accepts and enfo
     }
     assert.ok(validateJsonSchemaValue(schema, { kind: 'background' }).length > 0, 'incomplete value is rejected')
   })
+})
+
+
+// ---------------------------------------------------------------- web routes (security)
+
+function captureWebServer({ host = '127.0.0.1', port = 3399, protocol = 'http:' } = {}) {
+  const routes = new Map()
+  return {
+    routes, host, port, protocol,
+    register(route) { routes.set(route.path, route); return () => routes.delete(route.path) },
+    tapIndex() { return () => {} },
+  }
+}
+
+function fakeRequest({ method = 'GET', url = '/', headers = {}, body } = {}) {
+  const chunks = body === undefined ? [] : [Buffer.from(body)]
+  const req = {
+    method, url, headers: { host: '127.0.0.1:3399', ...headers },
+    resume() {},
+    async *[Symbol.asyncIterator]() { for (const c of chunks) yield c },
+  }
+  return req
+}
+
+function fakeResponse() {
+  const collected = []
+  const res = new Writable({ write(chunk, _enc, cb) { collected.push(Buffer.from(chunk)); cb() } })
+  res.statusCode = 200
+  res.headers = {}
+  Object.defineProperty(res, 'body', { get: () => Buffer.concat(collected) })
+  Object.defineProperty(res, 'headersSent', { get: () => res._sent === true })
+  res.setHeader = (k, v) => { res.headers[k.toLowerCase()] = v }
+  res.getHeader = (k) => res.headers[k.toLowerCase()]
+  res.writeHead = (status, headers = {}) => { res.statusCode = status; res._sent = true; for (const [k, v] of Object.entries(headers)) res.headers[k.toLowerCase()] = v; return res }
+  return res
+}
+
+async function callRoute(ws, path, request) {
+  const route = ws.routes.get(path) ?? [...ws.routes.values()].find((r) => r.kind === 'prefix' && path.startsWith(r.path))
+  assert.ok(route, `route ${path} registered`)
+  const res = fakeResponse()
+  await route.handler(request, res)
+  return res
+}
+
+const allow = { requestRejection: () => undefined }
+
+await test('every /comfyui route refuses requests the DSH connection rejects (401/403)', async () => {
+  const ws = captureWebServer()
+  await withPlugin({ host: { webServer: ws, connection: { requestRejection: () => 401 } } }, async () => {
+    assert.ok(ws.routes.size >= 30, `routes mounted: ${ws.routes.size}`)
+    for (const route of ws.routes.values()) {
+      const res = fakeResponse()
+      await route.handler(fakeRequest({ method: 'GET', url: route.path }), res)
+      assert.equal(res.statusCode, 401, `${route.path} -> ${res.statusCode}`)
+    }
+  })
+})
+
+await test('routes fail closed when the host has no connection service', async () => {
+  const ws = captureWebServer()
+  await withPlugin({ host: { webServer: ws } }, async () => {
+    for (const route of ws.routes.values()) {
+      const res = fakeResponse()
+      await route.handler(fakeRequest({ url: route.path }), res)
+      assert.ok(res.statusCode === 403 || res.statusCode === 401, `${route.path} -> ${res.statusCode}`)
+    }
+  })
+})
+
+await test('host hint ignores Referer / X-Forwarded-Proto and unauthenticated requests', async () => {
+  const ws = captureWebServer()
+  let reject = 401
+  const connection = { requestRejection: () => reject }
+  await withPlugin({ host: { webServer: ws, connection } }, async ({ host }) => {
+    await callRoute(ws, '/comfyui/ping', fakeRequest({ url: '/comfyui/ping', headers: { host: 'evil.example', referer: 'https://evil.example/x' } }))
+    reject = undefined
+    await callRoute(ws, '/comfyui/ping', fakeRequest({ url: '/comfyui/ping', headers: { referer: 'https://evil.example/x', 'x-forwarded-proto': 'javascript:alert(1)//' } }))
+    const value = await host.tools.get('comfyui_run').execute({ template: 'txt2img' }, execFor())
+    assert.ok(value.media[0].url.startsWith('http://127.0.0.1:3399/comfyui/media'), value.media[0].url)
+  })
+})
+
+await test('media proxy never relays an active content type', async () => {
+  const ws = captureWebServer()
+  await withPlugin({ host: { webServer: ws, connection: allow }, comfy: { viewType: 'text/html' } }, async () => {
+    const res = await callRoute(ws, '/comfyui/media', fakeRequest({ url: '/comfyui/media?file=x.png&subfolder=&type=output' }))
+    assert.equal(res.headers['content-type'], 'application/octet-stream')
+    assert.equal(res.headers['x-content-type-options'], 'nosniff')
+    assert.match(String(res.headers['content-security-policy']), /sandbox/)
+  })
+})
+
+await test('skill-pack SVG is served as a sandboxed attachment', async () => {
+  const ws = captureWebServer()
+  let id
+  const seed = async (dataDir) => {
+    const { ComfyUIStore } = await import(join(root, 'lib', 'store.js'))
+    const store = new ComfyUIStore(dataDir, 100); await store.init()
+    const saved = await store.saveWorkflow({ name: 'svg', description: '', source: 'paste', parameters: [], workflow: { 9: { class_type: 'SaveImage', inputs: {} } } })
+    id = saved.workflow.id
+  }
+  await withPlugin({ seed, host: { webServer: ws, connection: allow } }, async ({ host }) => {
+    const skill = host.tools.get('comfyui_skill')
+    await skill.execute({ action: 'enable', workflow_id: id }, execFor())
+    const wrote = await skill.execute({ action: 'write', workflow_id: id, path: 'assets/x.svg', content: '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>' }, execFor()).catch((e) => ({ error: String(e) }))
+    assert.equal(wrote.error, undefined, 'svg written through the model tool (the attack path)')
+    const res = await callRoute(ws, '/comfyui/workflows/skill/raw', fakeRequest({ url: `/comfyui/workflows/skill/raw?id=${id}&path=assets/x.svg` }))
+    assert.equal(res.statusCode, 200)
+    assert.match(String(res.headers['content-disposition']), /^attachment/)
+    assert.match(String(res.headers['content-security-policy']), /sandbox/)
+  })
+})
+
+await test('oversized JSON bodies are refused with 413 before parsing', async () => {
+  const ws = captureWebServer()
+  await withPlugin({ host: { webServer: ws, connection: allow } }, async () => {
+    const big = JSON.stringify({ patch: { mediaHost: 'x'.repeat(20 * 1024 * 1024) } })
+    const res = await callRoute(ws, '/comfyui/config', fakeRequest({ method: 'POST', url: '/comfyui/config', headers: { 'content-type': 'application/json', 'content-length': String(big.length) }, body: big }))
+    assert.equal(res.statusCode, 413)
+  })
+})
+
+await test('asset deletion never infers the output root from server-reported fullpath', async () => {
+  const routes = await import(join(root, 'lib', 'routes.js'))
+  assert.equal(typeof routes.resolveOutputDir, 'function')
+  const assets = [{ media: [{ fullpath: '/home/u/.ssh/id_rsa', subfolder: '.ssh', filename: 'id_rsa' }] }]
+  assert.equal(routes.resolveOutputDir('', assets), undefined)
+  assert.equal(routes.resolveOutputDir('/srv/comfy/output', assets), '/srv/comfy/output')
+})
+
+await test('cancel does not interrupt when another client owns the running prompt (old ComfyUI)', async () => {
+  await withPlugin({ comfy: { completeAfterPolls: Infinity, foreignRunning: true } }, async ({ host, jobs, comfy }) => {
+    await host.tools.get('comfyui_run').execute({ template: 'txt2img', mode: 'async' }, execFor())
+    const hooks = jobs.started[0].run(jobHandle())
+    await new Promise((r) => setTimeout(r, 250))
+    hooks.cancel('test')
+    await hooks.done
+    assert.equal(comfy.calls.filter((c) => c.url === '/interrupt').length, 0, 'no interrupt while a foreign prompt runs')
+    assert.ok(comfy.calls.some((c) => c.url === '/queue' && c.method === 'POST'), 'still dequeued')
+  })
+})
+
+// ---------------------------------------------------------------- spec review follow-ups
+
+await test('every tool parameter schema is inside the host-enforced subset (typed PTC args)', async () => {
+  const { assertSupportedJsonSchema } = await import('@deepseek-ai/dsh-tools')
+  await withPlugin({}, async ({ host }) => {
+    for (const def of host.tools.values()) assertSupportedJsonSchema(def.parameters)
+  })
+})
+
+await test('a failing jobs.start leaves no orphan prompt queued', async () => {
+  const broken = { start() { throw new Error('no controller') } }
+  await withPlugin({ jobsOverride: broken }, async ({ host, comfy }) => {
+    await assert.rejects(host.tools.get('comfyui_run').execute({ template: 'txt2img', mode: 'async' }, execFor()))
+    assert.ok(comfy.calls.some((c) => c.url === '/queue' && c.method === 'POST' && c.body.includes('delete')), 'queued prompt was removed')
+  })
+})
+
+await test('an invalid mode is rejected before anything is queued', async () => {
+  await withPlugin({}, async ({ host, comfy }) => {
+    await assert.rejects(host.tools.get('comfyui_run').execute({ template: 'txt2img', mode: 'bogus' }, execFor()))
+    assert.equal(comfy.calls.filter((c) => c.url === '/prompt').length, 0)
+  })
+})
+
+await test('bindOrigin honours https and strips IPv6 zone ids', async () => {
+  const { bindOrigin } = plugin
+  assert.equal(bindOrigin('127.0.0.1', 3399, 'https:'), 'https://127.0.0.1:3399')
+  assert.equal(bindOrigin('fe80::1%eth0', 80, 'http:'), 'http://[fe80::1]:80')
+  assert.equal(bindOrigin('::1', 3399), 'http://[::1]:3399')
 })
 
 console.log(`\n${passed} passed, ${failures} failed`)

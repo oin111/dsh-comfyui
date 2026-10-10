@@ -1,8 +1,9 @@
 /**
- * dsh-comfyui host entry: wires the tools, HTTP routes, and media proxy, and
- * registers the `comfyui:` settings section so the browser settings page can
- * persist config without editing cordis.yml. Everything unmounts with the
- * plugin fiber.
+ * dsh-comfyui host entry: wires the tools, the authenticated HTTP routes and
+ * media proxy (guard.ts), the companion skill, and the dsh 0.2 settings
+ * integration (volatile Config fields + `loader/volatile-update`), so the
+ * browser settings page persists config without editing cordis.yml.
+ * Everything unmounts with the plugin fiber.
  */
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only: augments cordis Context with ctx.settings used by the inject below
@@ -24,6 +25,7 @@ import { registerComfyUITools, type ComfyUIRuntime } from './tools.js'
 import { mountComfyUIRoutes } from './routes.js'
 import { mountComfyUIProxy } from './proxy.js'
 import { createHostHint, detectLanOrigin } from './host-hint.js'
+import { guardedRegistrar, type ConnectionTrust, type RouteRegistrar } from './guard.js'
 
 export const name = 'dsh-comfyui'
 export { Config }
@@ -91,13 +93,16 @@ async function resolveApiKey(ctx: Context, envName: string): Promise<string | un
  * guessing a LAN interface. A guessed LAN IP is wrong for a loopback-only
  * server, which is the default.
  */
-export function bindOrigin(host: string | undefined, port: number): string {
-  const bound = host === undefined || host === '' ? '127.0.0.1' : host
+export function bindOrigin(host: string | undefined, port: number, protocol = 'http:'): string {
+  const scheme = protocol === 'https:' ? 'https:' : 'http:'
+  // An IPv6 zone id (fe80::1%eth0) is meaningless to a remote browser and
+  // would need %25-escaping in a URL; drop it.
+  const bound = (host === undefined || host === '' ? '127.0.0.1' : host).replace(/%.*$/, '')
   if (bound === '0.0.0.0' || bound === '::' || bound === '[::]') {
-    return detectLanOrigin(port) ?? `http://127.0.0.1:${port}`
+    return detectLanOrigin(port, scheme) ?? `${scheme}//127.0.0.1:${port}`
   }
   const literal = bound.includes(':') && !bound.startsWith('[') ? `[${bound}]` : bound
-  return `http://${literal}:${port}`
+  return `${scheme}//${literal}:${port}`
 }
 
 /** Default plugin data directory under the harness home. */
@@ -111,7 +116,7 @@ function defaultDataDir(): string {
  * (defaults applied), then hands the resolved object to apply.
  */
 export async function apply(ctx: Context, entryConfig: Partial<Record<keyof ConfigType, unknown>>): Promise<void> {
-  // Volatile fields arrive as references on dsh 0.1.7+ (plain values on older
+  // Volatile fields arrive as references (plain values when composed without
   // hosts); `resolved` is the one plain object every consumer reads, refreshed
   // in place when the Loader commits a settings-page change.
   const resolved: ConfigType = resolveConfig(entryConfig, defaultDataDir())
@@ -164,13 +169,17 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
       progress.attach(url)
     }
   }
-  // dsh 0.1.7+: a settings-page save commits volatile values into the same
+  // dsh 0.2: a settings-page save commits volatile values into the same
   // references without restarting the plugin, then notifies this fiber.
   ctx.on('loader/volatile-update' as never, (() => {
     refreshConfig(resolveConfig(entryConfig, defaultDataDir()))
   }) as never)
 
-  const hostHint = createHostHint()
+  const webProtocol = (): string => {
+    const ws = ctx.get('webServer') as { protocol?: string } | undefined
+    return ws?.protocol === 'https:' ? 'https:' : 'http:'
+  }
+  const hostHint = createHostHint(webProtocol)
 
   const runtime: ComfyUIRuntime = {
     getConfig: () => resolved,
@@ -187,9 +196,9 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
       if (explicit !== '') return explicit
       const hinted = hostHint.origin()
       if (hinted !== undefined) return hinted
-      const ws = ctx.get('webServer') as { port?: number; host?: string } | undefined
+      const ws = ctx.get('webServer') as { port?: number; host?: string; protocol?: string } | undefined
       if (ws === undefined || ws.port === undefined) return undefined
-      return bindOrigin(ws.host, ws.port)
+      return bindOrigin(ws.host, ws.port, ws.protocol)
     },
     settingsWritable: () => {
       const settings = ctx.get('settings') as SettingsService | undefined
@@ -398,10 +407,17 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => {
       const disposers: Array<() => void> = []
-      const routesDisposer = mountComfyUIRoutes(webCtx, runtime)
-      if (routesDisposer !== undefined) disposers.push(routesDisposer)
-      const proxyDisposer = mountComfyUIProxy(webCtx, runtime)
-      if (proxyDisposer !== undefined) disposers.push(proxyDisposer)
+      const rawServer = webCtx.get('webServer') as RouteRegistrar | undefined
+      if (rawServer === undefined) return () => {}
+      // Every route asks DSH's connection (Host/Origin fence + launch-token
+      // cookie) first; no connection service means no access (guard.ts).
+      const registrar = guardedRegistrar(
+        rawServer,
+        () => webCtx.get('connection' as never) as ConnectionTrust | undefined,
+        (request) => hostHint.record(request),
+      )
+      disposers.push(mountComfyUIRoutes(webCtx, runtime, registrar))
+      disposers.push(mountComfyUIProxy(webCtx, runtime, registrar))
       // Inject a one-line self-report into the served index.html: on every
       // page load the browser pings /comfyui/ping, which records the origin
       // the browser actually uses, so generated media URLs match the user's

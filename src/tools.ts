@@ -6,9 +6,8 @@
  * workflows from the panel-managed workflow library.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import type { JobHandle, JobOutcome, JobRegistry, JobSpec } from '@deepseek-ai/dsh-jobs'
 import type { Config } from './config.js'
-import { ComfyUIClient, collectMedia } from './comfyui.js'
+import { ComfyUIClient, ComfyUIInterruptedError, collectMedia } from './comfyui.js'
 import { TEMPLATES, findTemplate, cloneWorkflow, applyTemplateInputs } from './templates.js'
 import type { AssetRecord, LoadSlot, StoredWorkflow } from './store.js'
 import type { GraphAnalysis } from './analyze.js'
@@ -118,10 +117,30 @@ interface ToolRunContext {
   signal: AbortSignal
 }
 
-declare module '@deepseek-ai/dsh-jobs' {
-  interface JobKindMap {
-    comfyui: 'comfyui'
-  }
+/*
+ * Structural slice of the dsh 0.2 jobs contract (@deepseek-ai/dsh-jobs
+ * JobSpec / JobHooks / JobOutcome). Kept local so the published typings do
+ * not import a package that is not a peer; scripts/test-host-compat.mjs pins
+ * the runtime behaviour against the real registry shape.
+ */
+interface JobHandle {
+  readonly id: string
+  append(text: string): void
+  updateProgress(line: string): void
+}
+interface JobOutcome {
+  status: 'completed' | 'killed' | 'failed'
+  detail?: string
+  result?: string
+}
+interface JobSpec {
+  kind: string
+  label: string
+  owner?: string
+  run(job: JobHandle): { cancel(reason?: string): void; done: Promise<JobOutcome> }
+}
+interface JobRegistry {
+  start(spec: JobSpec): string
 }
 
 /**
@@ -203,7 +222,7 @@ interface ToolDefinition {
  * left `job_output` empty on 0.1.7+. Cancelling stops the poll loop and cancels
  * only this prompt on the ComfyUI side.
  */
-export function startBackgroundRun(options: {
+export async function startBackgroundRun(options: {
   jobs: Pick<JobRegistry, 'start'>
   runtime: Pick<ComfyUIRuntime, 'proxyBase' | 'untrack' | 'queueProgress'>
   client: Pick<ComfyUIClient, 'waitForCompletion' | 'cancelPrompt'>
@@ -212,12 +231,12 @@ export function startBackgroundRun(options: {
   label: string
   waitMs: number
   owner: string | undefined
-}): string {
+}): Promise<string> {
   const { jobs, runtime, client, config, promptId, label, waitMs, owner } = options
   const spec: JobSpec = {
     kind: 'comfyui',
     label,
-    ...(owner !== undefined ? { owner: owner as NonNullable<JobSpec['owner']> } : {}),
+    ...(owner !== undefined ? { owner } : {}),
     run: (job: JobHandle) => {
       const controller = new AbortController()
       const startedAt = Date.now()
@@ -262,10 +281,38 @@ export function startBackgroundRun(options: {
       }
     },
   }
-  return jobs.start(spec)
+  try {
+    return jobs.start(spec)
+  } catch (error) {
+    // The prompt is already queued; a refused job (no live owner, registry
+    // closing) must not leave it running unattended on the server.
+    runtime.untrack(promptId)
+    await client.cancelPrompt(promptId).catch(() => undefined)
+    throw error
+  }
 }
 
 const TOOL_TIMEOUT_MS = 3_600_000
+
+/** The `timeout_ms` argument, clamped to 5 s – 1 h (bounds live here, not in
+ * the schema: the host's schema subset has no minimum/maximum). */
+function clampWait(value: unknown, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.min(3_600_000, Math.max(5_000, Math.round(value)))
+}
+
+/** Settle with `promise`, or reject as soon as the tool call is cancelled. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error('cancelled'))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => { reject(new Error('cancelled')) }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => { signal.removeEventListener('abort', onAbort); resolve(value) },
+      (error: unknown) => { signal.removeEventListener('abort', onAbort); reject(error) },
+    )
+  })
+}
 
 function missing(args: Record<string, unknown>, name: string): boolean {
   return args[name] === undefined || args[name] === null
@@ -372,7 +419,7 @@ async function waitSync(
     }
   } catch (error) {
     runtime.untrack(promptId)
-    if (error instanceof Error && error.name === 'ComfyUIError' && error.message.includes('interrupted')) {
+    if (error instanceof ComfyUIInterruptedError) {
       return {
         kind: 'sync',
         promptId,
@@ -400,7 +447,7 @@ const RUN_RESULT_SCHEMA = {
         promptId: { type: 'string' },
         status: { type: 'string', enum: ['completed', 'interrupted'] },
         elapsedMs: { type: 'number' },
-        media: { type: 'array', items: { type: 'object', description: 'One output: filename, subfolder, type, kind, url, metadata.' } },
+        media: { type: 'array', items: { type: 'object', description: 'One output: filename, subfolder, type, kind (image|video|audio), url, node, index, id.' } },
         summary: { type: 'string' },
       },
       required: ['kind', 'promptId', 'status', 'elapsedMs', 'media', 'summary'],
@@ -436,7 +483,7 @@ function runDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefinition {
         template: { type: 'string', enum: ['txt2img', 'img2img', 'video'], description: 'Built-in workflow template id. Alternative to `workflow`.' },
         inputs: { type: 'object', description: 'Per-node input overrides keyed by node id, e.g. {"3": {"seed": 42, "steps": 30}, "6": {"text": "prompt"}}.' },
         mode: { type: 'string', enum: ['sync', 'async'], default: 'sync', description: 'sync waits and returns media; async returns a background job id.' },
-        timeout_ms: { type: 'number', minimum: 5_000, maximum: 3_600_000, description: 'Generation wait budget in ms (default 180000). Video needs minutes.' },
+        timeout_ms: { type: 'number', description: 'Generation wait budget in ms, 5000–3600000 (clamped; default from settings, 900000). Video needs minutes.' },
       },
       required: [],
     },
@@ -469,14 +516,14 @@ function runDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefinition {
       const client = runtime.createClient(apiKey)
       const { workflow, label } = buildWorkflow(args)
       const promptId = await runtime.queue(workflow, { workflowName: label, source: 'tool' })
-      const waitMs = typeof args.timeout_ms === 'number' ? args.timeout_ms : config.timeoutMs
+      const waitMs = clampWait(args.timeout_ms, config.timeoutMs)
 
       if (mode === 'async') {
         const jobs = ctx.get('jobs') as JobRegistry | undefined
         if (jobs === undefined) {
           throw new Error('comfyui_run: background jobs unavailable — load @deepseek-ai/dsh-jobs-local and @deepseek-ai/dsh-tool-jobs')
         }
-        const jobId = startBackgroundRun({
+        const jobId = await startBackgroundRun({
           jobs, runtime, client, config, promptId, label, waitMs, owner: exec.agent?.id,
         })
         const result: BackgroundResult = { kind: 'background', jobId, promptId, label }
@@ -543,9 +590,9 @@ function objectInfoDefinition(runtime: ComfyUIRuntime): ToolDefinition {
       },
     },
     timeoutMs: 60_000,
-    async execute(args) {
+    async execute(args, exec) {
       const client = runtime.createClient(await runtime.getApiKey())
-      const raw = await client.objectInfo()
+      const raw = await abortable(client.objectInfo(), exec.signal)
       const entries = Object.entries(raw as Record<string, {
         display_name?: string
         description?: string
@@ -598,7 +645,7 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
         action: { type: 'string', enum: ['list', 'run', 'get', 'refresh'], description: 'list returns the workflow library; run executes one workflow by id (direct call to the saved JSON); get returns one workflow\'s full JSON for inspection; refresh re-derives one workflow\'s parameter snapshot from the current node definitions and saves it back.' },
         id: { type: 'string', description: 'Workflow id (required for action: run and get).' },
         mode: { type: 'string', enum: ['sync', 'async'], description: 'run mode (default sync); async starts a background job and returns its id for job_output. Video/audio workflows should use async — generation takes minutes and sync may time out.' },
-        timeout_ms: { type: 'number', minimum: 5_000, maximum: 3_600_000, description: 'Generation wait budget in ms (default 900000 = 15 min). Video needs minutes; raise this for long videos.' },
+        timeout_ms: { type: 'number', description: 'Generation wait budget in ms, 5000–3600000 (clamped; default 900000 = 15 min). Video needs minutes; raise this for long videos.' },
         parameters: {
           type: 'object',
           description: 'Optional per-run values for the workflow\'s adjustable parameters (see the workflow\'s `inputs` note from action: list — e.g. {"prompt": "a red cat", "seed": 42}). Omitted parameters keep their defaults; seed-type parameters randomize when the workflow marks them 随机.',
@@ -834,9 +881,12 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
         // object_info, so a voice library that grew since then would reject
         // the new voice at run time. Force the TTS rescan first (the object_info
         // COMBO does not self-heal), then re-derive the derived fields only.
-        await runtime.refreshVoiceLibrary()
+        await abortable(runtime.refreshVoiceLibrary(), exec.signal)
         const client = runtime.createClient(await runtime.getApiKey())
-        const objectInfo = await client.objectInfo().catch(() => undefined)
+        const objectInfo = await abortable(client.objectInfo(), exec.signal).catch((error: unknown) => {
+          if (exec.signal.aborted) throw error
+          return undefined
+        })
         const { parameters, changed } = refreshParameterMetadata(
           saved.parameters ?? [],
           objectInfo,
@@ -874,6 +924,11 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
       const values = typeof args.parameters === 'object' && args.parameters !== null
         ? (args.parameters as Record<string, unknown>)
         : {}
+      // Validate before queueing: a refused call must not leave a prompt behind.
+      const mode = args.mode === undefined ? 'sync' : args.mode
+      if (mode !== 'sync' && mode !== 'async') {
+        throw new Error(`comfyui_workflow: mode must be sync or async, got ${String(mode)}`)
+      }
       const promptId = await runtime.queue(saved.workflow, {
         workflowName: saved.name,
         workflowId: saved.id,
@@ -881,17 +936,13 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
         parameters: saved.parameters,
         values,
       })
-      const mode = args.mode === undefined ? 'sync' : args.mode
-      if (mode !== 'sync' && mode !== 'async') {
-        throw new Error(`comfyui_workflow: mode must be sync or async, got ${String(mode)}`)
-      }
-      const waitMs = typeof args.timeout_ms === 'number' ? args.timeout_ms : config.timeoutMs
+      const waitMs = clampWait(args.timeout_ms, config.timeoutMs)
       if (mode === 'async') {
         const jobs = ctx.get('jobs') as JobRegistry | undefined
         if (jobs === undefined) {
           throw new Error('comfyui_workflow: background jobs unavailable — load @deepseek-ai/dsh-jobs-local and @deepseek-ai/dsh-tool-jobs')
         }
-        const jobId = startBackgroundRun({
+        const jobId = await startBackgroundRun({
           jobs, runtime, client, config, promptId, label: saved.name, waitMs, owner: exec.agent?.id,
         })
         return { action: 'run', id, workflowName: saved.name, background: { kind: 'background', jobId, promptId, label: saved.name } }
