@@ -104,7 +104,7 @@ For a remote ComfyUI behind an authenticated proxy, provide the key via credenti
 | `apiKeyEnv` | `COMFYUI_API_KEY` | Optional API key env var / credential name |
 | `dataDir` | *(DSH data dir)* | Where the workflow library and asset index live |
 | `comfyuiDirs` | `[]` | Local ComfyUI install dirs (multiple allowed); the agent locates models, custom nodes, TTS voice libraries through these |
-| `outputDir` | `''` (inferred) | ComfyUI output dir (used to locate files when deleting assets) |
+| `outputDir` | `''` | ComfyUI output dir (absolute). Deleting an asset removes files only here; empty = only the panel record is removed, files stay |
 | `mediaHost` | `''` (auto) | External base URL for generated media |
 | `skillsDir` | `''` (default `dataDir/skills`) | Skill pack root (absolute path; a synced folder or VCS works) |
 

@@ -294,6 +294,15 @@ export async function startBackgroundRun(options: {
 
 const TOOL_TIMEOUT_MS = 3_600_000
 
+/** The jobs registry for an async run, or a refusal naming the missing plugins. */
+function requireJobs(ctx: Context, tool: string): JobRegistry {
+  const jobs = ctx.get('jobs') as JobRegistry | undefined
+  if (jobs === undefined) {
+    throw new Error(`${tool}: background jobs unavailable — load @deepseek-ai/dsh-jobs-local and @deepseek-ai/dsh-tool-jobs`)
+  }
+  return jobs
+}
+
 /** The `timeout_ms` argument, clamped to 5 s – 1 h (bounds live here, not in
  * the schema: the host's schema subset has no minimum/maximum). */
 function clampWait(value: unknown, fallback: number): number {
@@ -447,7 +456,7 @@ const RUN_RESULT_SCHEMA = {
         promptId: { type: 'string' },
         status: { type: 'string', enum: ['completed', 'interrupted'] },
         elapsedMs: { type: 'number' },
-        media: { type: 'array', items: { type: 'object', description: 'One output: filename, subfolder, type, kind (image|video|audio), url, node, index, id.' } },
+        media: { type: 'array', items: { type: 'object', description: 'One output: filename, subfolder, type, kind (image|video|audio|other), url, node, index.' } },
         summary: { type: 'string' },
       },
       required: ['kind', 'promptId', 'status', 'elapsedMs', 'media', 'summary'],
@@ -515,14 +524,13 @@ function runDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefinition {
       const apiKey = await runtime.getApiKey()
       const client = runtime.createClient(apiKey)
       const { workflow, label } = buildWorkflow(args)
+      // Resolve the jobs service before queueing: a refused async call must
+      // not leave a prompt running unattended on the server.
+      const jobs = mode === 'async' ? requireJobs(ctx, 'comfyui_run') : undefined
       const promptId = await runtime.queue(workflow, { workflowName: label, source: 'tool' })
       const waitMs = clampWait(args.timeout_ms, config.timeoutMs)
 
-      if (mode === 'async') {
-        const jobs = ctx.get('jobs') as JobRegistry | undefined
-        if (jobs === undefined) {
-          throw new Error('comfyui_run: background jobs unavailable — load @deepseek-ai/dsh-jobs-local and @deepseek-ai/dsh-tool-jobs')
-        }
+      if (jobs !== undefined) {
         const jobId = await startBackgroundRun({
           jobs, runtime, client, config, promptId, label, waitMs, owner: exec.agent?.id,
         })
@@ -929,6 +937,7 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
       if (mode !== 'sync' && mode !== 'async') {
         throw new Error(`comfyui_workflow: mode must be sync or async, got ${String(mode)}`)
       }
+      const jobs = mode === 'async' ? requireJobs(ctx, 'comfyui_workflow') : undefined
       const promptId = await runtime.queue(saved.workflow, {
         workflowName: saved.name,
         workflowId: saved.id,
@@ -937,11 +946,7 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
         values,
       })
       const waitMs = clampWait(args.timeout_ms, config.timeoutMs)
-      if (mode === 'async') {
-        const jobs = ctx.get('jobs') as JobRegistry | undefined
-        if (jobs === undefined) {
-          throw new Error('comfyui_workflow: background jobs unavailable — load @deepseek-ai/dsh-jobs-local and @deepseek-ai/dsh-tool-jobs')
-        }
+      if (jobs !== undefined) {
         const jobId = await startBackgroundRun({
           jobs, runtime, client, config, promptId, label: saved.name, waitMs, owner: exec.agent?.id,
         })

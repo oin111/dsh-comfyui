@@ -511,6 +511,25 @@ await test('an invalid mode is rejected before anything is queued', async () => 
   })
 })
 
+await test('async without a jobs service is refused before anything is queued (both tools)', async () => {
+  let id
+  const seed = async (dataDir) => {
+    const { ComfyUIStore } = await import(join(root, 'lib', 'store.js'))
+    const store = new ComfyUIStore(dataDir, 100)
+    await store.init()
+    const saved = await store.saveWorkflow({
+      name: 'stub', description: 'stub', source: 'paste', parameters: [],
+      workflow: { 9: { class_type: 'SaveImage', inputs: { filename_prefix: 'x' } } },
+    })
+    id = saved.workflow.id
+  }
+  await withPlugin({ seed, host: { jobs: undefined } }, async ({ host, comfy }) => {
+    await assert.rejects(host.tools.get('comfyui_run').execute({ template: 'txt2img', mode: 'async' }, execFor()), /background jobs unavailable/)
+    await assert.rejects(host.tools.get('comfyui_workflow').execute({ action: 'run', id, mode: 'async' }, execFor()), /background jobs unavailable/)
+    assert.equal(comfy.calls.filter((c) => c.url === '/prompt').length, 0, 'no orphan prompt')
+  })
+})
+
 await test('bindOrigin honours https and strips IPv6 zone ids', async () => {
   const { bindOrigin } = plugin
   assert.equal(bindOrigin('127.0.0.1', 3399, 'https:'), 'https://127.0.0.1:3399')

@@ -150,7 +150,9 @@ const SKILL_FALLBACK_DIRS = ['references', 'scripts', 'assets']
 
 /** Imported binaries land in assets/; the editor previews these instead of
  * trying to read them as text. */
-const SKILL_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg']
+// Raster only: the raw route serves SVG as a sandboxed attachment (it can
+// carry script), so an SVG opens in the text editor as the XML it is.
+const SKILL_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif']
 
 function isSkillImage(path: string): boolean {
   const dot = path.lastIndexOf('.')

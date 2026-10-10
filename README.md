@@ -104,7 +104,7 @@ dsh plugin --profile desktop add https://github.com/oin111/dsh-comfyui/releases/
 | `apiKeyEnv` | `COMFYUI_API_KEY` | 可选 API Key 的环境变量 / 凭据名 |
 | `dataDir` | *（DSH 数据目录）* | 工作流库与资产索引存放位置 |
 | `comfyuiDirs` | `[]` | 本机 ComfyUI 安装目录列表（可多条），Agent 据此定位 models、自定义节点、TTS 音色库 |
-| `outputDir` | `''`（自动推断） | ComfyUI 输出目录（删除资产时定位文件用） |
+| `outputDir` | `''` | ComfyUI 输出目录（绝对路径）。删除资产时只在这里删文件；留空则只删面板记录，文件保留 |
 | `mediaHost` | `''`（自动检测） | 生成媒体的外网访问基址 |
 | `skillsDir` | `''`（默认 `dataDir/skills`） | 技能包根目录（绝对路径，可放同步盘 / 版本库） |
 

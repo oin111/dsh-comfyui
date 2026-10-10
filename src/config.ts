@@ -40,9 +40,9 @@ export const Config = z.object({
   /** External base URL for generated media (e.g. http://192.168.1.5:3080). Empty = auto-detect the browser's request host, then http://127.0.0.1:<webServerPort>. */
   mediaHost: z.string().default('').volatile(),
   /** ComfyUI's output directory on this machine, used to delete asset files
-   * from the panel. Empty = infer it from the file paths ComfyUI reports;
-   * deletion falls back to removing the index record when neither works
-   * (e.g. a ComfyUI running on another host). */
+   * from the panel. Only an explicit absolute path is trusted; empty means
+   * deletion removes the index record and leaves the files alone (paths
+   * reported by ComfyUI are never used to pick a directory to unlink in). */
   outputDir: z.string().default(''),
   /** ComfyUI install root(s) on this machine (absolute paths). Multiple
    * entries are allowed because ComfyUI folders can be mapped/mounted (extra
@@ -75,7 +75,7 @@ export type Config = {
   skillsDir: string
   /** External base URL for generated media; empty auto-detects the request host. */
   mediaHost: string
-  /** ComfyUI's output directory on this machine; empty infers it from reported file paths. */
+  /** ComfyUI's output directory on this machine (absolute); empty = delete index records only. */
   outputDir: string
   /** ComfyUI install root(s) on this machine; the agent uses them to locate files directly. */
   comfyuiDirs: string[]

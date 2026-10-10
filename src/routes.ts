@@ -54,12 +54,9 @@ function healAssetUrls(assets: AssetRecord[]): AssetRecord[] {
  *
  * ComfyUI has no API that deletes an output file (its own asset routes only
  * soft-delete a database row and keep the content), so removing a generated
- * file means touching the filesystem directly. The configured `outputDir`
- * wins; otherwise it is inferred from the absolute path some nodes report
- * with their results (`fullpath`), by stripping the subfolder/filename tail
- * the record already carries. When neither is available — a ComfyUI on
- * another host, for instance — deletion degrades to dropping the index
- * record and says so.
+ * file means touching the filesystem directly. Only the operator-configured
+ * absolute `outputDir` is used; without it (or for a ComfyUI on another
+ * host) deletion degrades to dropping the index record and says so.
  */
 export function resolveOutputDir(configured: string, _assets: Array<{ media: unknown[] }>): string | undefined {
   // Only an operator-configured directory is trusted. Inferring the root from
