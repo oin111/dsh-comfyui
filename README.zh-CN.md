@@ -20,6 +20,15 @@
 >
 > 安装：`dsh plugin --profile web add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.0/oin111-dsh-comfyui-0.6.0.tgz`
 
+## 后端安全与传输上限
+
+- 后端 JSON 响应最多 **8 MiB**，错误正文最多 **64 KiB**。预检 Content-Length 后仍累计实际字节，分块传输或虚报长度也不能绕过上限。
+- 缓冲与流式媒体（HTTP 200 / 206）每次传输均受 `maxMediaBytes` 限制。单段 Range 截到此预算并保留起点（或缩短后缀范围）；拒绝非法/多段范围与不匹配的 `Content-Range`。仍可通过有界范围读取大文件的一段。HEAD 不下载正文，416 正文丢弃。
+- `connectTimeoutMs` 覆盖整个媒体传输，不只到响应头。超限、拒绝或下游取消流会关闭上游正文；响应头已发出后发生流错误则关闭下载，不再返回 JSON 错误。
+- 所有后端 HTTP 接口（含上传与 `/api` 回退）拒绝重定向（`redirect`）；请直接配置最终后端 URL。原生 WebSocket 进度握手也不跟随重定向。
+- 取消会中止在途 history fetch。即使 history 同时失败，也先等待本 prompt 的 `cancelPrompt` 尝试，再报告 killed/interrupted 与解除跟踪。清理是 best-effort：失联后端可能继续运行。只有 queue 确认本 prompt 正在运行才 interrupt，不主动打断别人的任务。
+- 媒体 origin 只取已放行请求的 Host 与宿主协议，不读 Referer；兜底为具体绑定地址，仅通配绑定才检测 LAN。删除资产只在显式配置绝对且可达的 `outputDir` 时尝试删除文件，否则只删索引记录。
+
 ## 功能
 
 ### Agent 工具

@@ -20,6 +20,15 @@
 >
 > Install: `dsh plugin --profile web add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.0/oin111-dsh-comfyui-0.6.0.tgz`
 
+## Backend safety and transfer limits
+
+- Backend JSON responses are limited to **8 MiB** and error bodies to **64 KiB**. Declared Content-Length is checked, but actual bytes are counted too, including chunked or misleading-length bodies.
+- Buffered and streamed media bodies (HTTP 200 and 206) are limited to `maxMediaBytes` per transfer. A single Range is capped to that budget, preserving its start (or shortening a suffix); malformed/multipart ranges and inconsistent `Content-Range` responses are refused. This still allows bounded seeking within larger files. HEAD reads no body; 416 bodies are discarded.
+- `connectTimeoutMs` remains active for the whole media transfer, not just response headers. Oversize/refused bodies and downstream stream cancellation close the upstream body. A streaming failure after headers closes the download rather than returning an error JSON.
+- All backend HTTP endpoints, including uploads and the `/api` fallback, refuse redirects (`redirect`); configure the final backend URL directly. The native WebSocket progress handshake also does not follow redirects.
+- Cancellation aborts an in-flight history fetch. Even if history fails concurrently, the plugin awaits a targeted `cancelPrompt` attempt before reporting killed/interrupted or removing tracking. Cleanup is best-effort: an unreachable backend may continue work. Only a queue-confirmed matching running prompt is interrupted; unrelated prompts are not intentionally stopped.
+- Media origins use only an admitted request's Host and the host server's protocol, never Referer. The fallback is the concrete bind address; LAN detection is used only for wildcard binds. Asset deletion attempts file removal only under an explicitly configured absolute, accessible `outputDir`; otherwise it removes only the index record.
+
 ## Features
 
 ### Agent tools

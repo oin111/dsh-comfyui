@@ -36,7 +36,7 @@
     "build:client": "tsdown -c tsdown.config.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "prepack": "npm run build",
-    "test": "npm run build && node scripts/test-host-compat.mjs && node scripts/test-store-params.mjs && node scripts/test-skillpack.mjs && node scripts/test-transfer.mjs && node scripts/test-convert.mjs"
+    "test": "npm run build && node --test scripts/test-backend-boundaries.mjs && node scripts/test-host-compat.mjs && node scripts/test-store-params.mjs && node scripts/test-skillpack.mjs && node scripts/test-transfer.mjs && node scripts/test-convert.mjs"
   },
   "keywords": [
     "deepseek",

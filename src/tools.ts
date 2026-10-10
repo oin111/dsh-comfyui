@@ -34,7 +34,7 @@ export interface ComfyUIRuntime {
   /** Resolve the API key per request (credentials store, then environment). */
   getApiKey(): Promise<string | undefined>
   createClient(apiKey: string | undefined): ComfyUIClient
-  /** Absolute media proxy URL base: explicit config > detected request host > loopback. */
+  /** Absolute media proxy URL base: explicit config > admitted request Host > bind-address fallback (LAN detection only for wildcard binds). */
   proxyBase(): string | undefined
   /** Remembers the origin browsers use to reach this server (Host header). */
   hostHint: HostHint
@@ -286,8 +286,8 @@ export async function startBackgroundRun(options: {
   } catch (error) {
     // The prompt is already queued; a refused job (no live owner, registry
     // closing) must not leave it running unattended on the server.
-    runtime.untrack(promptId)
     await client.cancelPrompt(promptId).catch(() => undefined)
+    runtime.untrack(promptId)
     throw error
   }
 }
@@ -645,13 +645,14 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
       'It also lists workflows the user saved on the ComfyUI server (衍生主题: UI graph format canvases). A graph may hold SEVERAL independent flows; each is extracted into its own runnable workflow in the panel (整体/按分量/主流程). A graph with no extracted workflow yet cannot run — tell the user to open the ComfyUI panel and 提取 it first.',
       '`action: run` runs one saved workflow by id — pass only the id plus parameter overrides; the plugin submits the saved workflow JSON itself (never copy the JSON into your reply). It waits for media by default; add `mode: "async"` to run in the background and collect the result with job_output.',
       '`action: get` returns one saved workflow\'s complete API-format JSON by id for inspection/diagnostics only — it consumes many tokens and is not the run path.',
+      '`action: skill` reads the workflow skill pack SKILL.md by id, with its directory and file list; read it before running workflows that require their skill.',
       '`action: refresh` re-derives one saved workflow\'s parameter snapshot (options / numberKind / min/max/step) from the current node definitions and saves it back. Run it after the TTS-Audio-Suite voice library or node definitions changed: saved workflows snapshot their parameter options at save time, so a freshly added voice is not accepted by `action: run` until the snapshot catches up. It force-rescans the TTS voice library first, then updates only the fields derived from object_info — the parameter set (including user-added advanced parameters) is preserved. Returns `changed` with the parameter names that actually changed.',
     ].join(' '),
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'run', 'get', 'refresh'], description: 'list returns the workflow library; run executes one workflow by id (direct call to the saved JSON); get returns one workflow\'s full JSON for inspection; refresh re-derives one workflow\'s parameter snapshot from the current node definitions and saves it back.' },
-        id: { type: 'string', description: 'Workflow id (required for action: run and get).' },
+        action: { type: 'string', enum: ['list', 'run', 'get', 'refresh', 'skill'], description: 'list returns the workflow library; run executes one workflow by id (direct call to the saved JSON); get returns one workflow\'s full JSON for inspection; skill reads its SKILL.md, directory and file list; refresh re-derives one workflow\'s parameter snapshot from the current node definitions and saves it back.' },
+        id: { type: 'string', description: 'Workflow id (required for action: run, get, skill and refresh).' },
         mode: { type: 'string', enum: ['sync', 'async'], description: 'run mode (default sync); async starts a background job and returns its id for job_output. Video/audio workflows should use async — generation takes minutes and sync may time out.' },
         timeout_ms: { type: 'number', description: 'Generation wait budget in ms, 5000–3600000 (clamped; default 900000 = 15 min). Video needs minutes; raise this for long videos.' },
         parameters: {

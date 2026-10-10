@@ -156,6 +156,96 @@ export const CLIENT_ID = randomUUID()
  */
 const routePrefix = new Map<string, '' | '/api'>()
 
+/** Separate backend budgets: node definitions can be large; error diagnostics cannot. */
+const MAX_JSON_BYTES = 8 * 1024 * 1024
+const MAX_ERROR_BYTES = 64 * 1024
+
+/** Read only a bounded number of actual bytes, regardless of upstream length claims. */
+async function boundedBytes(response: Response, limit: number): Promise<Uint8Array> {
+  const fail = (): never => { throw new ComfyUIError(`ComfyUI body too large: exceeds ${limit} bytes`) }
+  if (Number(response.headers.get('content-length')) > limit) {
+    await response.body?.cancel()
+    fail()
+  }
+  if (response.body === null) return new Uint8Array()
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > limit) fail()
+      chunks.push(value)
+    }
+    const result = new Uint8Array(size)
+    let offset = 0
+    for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength }
+    return result
+  } catch (error) {
+    await reader.cancel().catch(() => undefined)
+    throw error
+  } finally { reader.releaseLock() }
+}
+
+/** Refuse multipart/malformed ranges and bound a single requested segment. */
+function boundedRange(value: string | undefined, limit: number): { header: string; start?: number; end?: number; suffix?: number } | undefined {
+  if (value === undefined) return undefined
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value)
+  if (match === null || (match[1] === '' && match[2] === '')) throw new ComfyUIError('Invalid media Range')
+  const a = Number(match[1]), b = Number(match[2])
+  if (![a, b].every(Number.isSafeInteger)) throw new ComfyUIError('Invalid media Range')
+  if (match[1] === '') {
+    if (b <= 0) throw new ComfyUIError('Invalid media Range')
+    const suffix = Math.min(b, limit)
+    return { header: `bytes=-${suffix}`, suffix }
+  }
+  if (match[2] !== '' && b < a) throw new ComfyUIError('Invalid media Range')
+  const end = Math.min(match[2] === '' ? Number.MAX_SAFE_INTEGER : b, a + limit - 1, Number.MAX_SAFE_INTEGER)
+  return { header: `bytes=${a}-${end}`, start: a, end }
+}
+
+/** Keep the timeout alive until EOF, error, or downstream cancellation. */
+function boundedStream(body: ReadableStream<Uint8Array>, limit: number, expected: number | undefined, abort: AbortController, finish: () => void): ReadableStream<Uint8Array> {
+  const reader = body.getReader()
+  let size = 0, closed = false
+  let output: ReadableStreamDefaultController<Uint8Array>
+  const cleanup = (): void => { closed = true; finish(); abort.signal.removeEventListener('abort', onAbort) }
+  const onAbort = (): void => {
+    if (closed) return
+    cleanup()
+    output.error(new ComfyUIError('ComfyUI media transfer timeout/aborted'))
+    void reader.cancel().catch(() => undefined)
+  }
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      output = controller
+      abort.signal.addEventListener('abort', onAbort, { once: true })
+      if (abort.signal.aborted) onAbort()
+    },
+    async pull(controller) {
+      try {
+        const { value, done } = await reader.read()
+        if (closed) return
+        if (done) {
+          if (expected !== undefined && size !== expected) throw new ComfyUIError('ComfyUI truncated media range')
+          cleanup(); reader.releaseLock(); controller.close(); return
+        }
+        size += value.byteLength
+        if (size > limit) throw new ComfyUIError('ComfyUI body too large')
+        controller.enqueue(value)
+      } catch (error) {
+        if (closed) return
+        cleanup(); controller.error(error)
+        await reader.cancel().catch(() => undefined)
+        abort.abort()
+      }
+    },
+    async cancel(reason) { cleanup(); await reader.cancel(reason).catch(() => undefined); abort.abort() },
+  })
+}
+
 /** HTTP client over the ComfyUI REST API. */
 export class ComfyUIClient {
   constructor(
@@ -177,14 +267,24 @@ export class ComfyUIClient {
   /** fetch() one route, retrying a 404 under /api until the prefix is known. */
   private async fetchRoute(path: string, init: RequestInit): Promise<Response> {
     const base = this.base()
-    const response = await fetch(this.endpoint(path), init)
+    const fetchOnce = async (url: string): Promise<Response> => {
+      const result = await fetch(url, { ...init, redirect: 'manual' })
+      if (result.status >= 300 && result.status < 400) {
+        await result.body?.cancel()
+        throw new ComfyUIError('ComfyUI backend redirect refused', result.status)
+      }
+      return result
+    }
+    const response = await fetchOnce(this.endpoint(path))
     if (path.startsWith('/api/') || routePrefix.has(base)) return response
     if (response.ok) {
       routePrefix.set(base, '')
       return response
     }
     if (response.status !== 404) return response
-    const retry = await fetch(`${base}/api${path}`, init)
+    let retry: Response
+    try { retry = await fetchOnce(`${base}/api${path}`) }
+    catch (error) { await response.body?.cancel(); throw error }
     if (!retry.ok) {
       await retry.body?.cancel()
       return response
@@ -200,15 +300,16 @@ export class ComfyUIClient {
     try {
       const headers: Record<string, string> = { ...(init.headers as Record<string, string> | undefined) }
       if (this.apiKey !== undefined) headers['Authorization'] = `Bearer ${this.apiKey}`
-      const response = await this.fetchRoute(path, { ...init, headers, signal: controller.signal })
+      const signal = init.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal
+      const response = await this.fetchRoute(path, { ...init, headers, signal })
       if (!response.ok) {
-        const body = await response.text().catch(() => '')
+        const body = new TextDecoder().decode(await boundedBytes(response, MAX_ERROR_BYTES))
         throw new ComfyUIError(
           `ComfyUI ${path} failed: HTTP ${response.status}${body !== '' ? ` — ${body.slice(0, 300)}` : ''}`,
           response.status,
         )
       }
-      const text = await response.text()
+      const text = new TextDecoder().decode(await boundedBytes(response, MAX_JSON_BYTES))
       if (text === '') return undefined as T
       try {
         return JSON.parse(text) as T
@@ -297,8 +398,8 @@ export class ComfyUIClient {
   }
 
   /** Read one prompt's history entry; undefined while the prompt is unknown or evicted. */
-  async getHistory(promptId: string): Promise<ComfyUIHistoryEntry | undefined> {
-    const data = await this.request<Record<string, ComfyUIHistoryEntry>>(`/history/${encodeURIComponent(promptId)}`)
+  async getHistory(promptId: string, signal?: AbortSignal): Promise<ComfyUIHistoryEntry | undefined> {
+    const data = await this.request<Record<string, ComfyUIHistoryEntry>>(`/history/${encodeURIComponent(promptId)}`, { signal })
     return data[promptId]
   }
 
@@ -478,52 +579,67 @@ export class ComfyUIClient {
       if (this.apiKey !== undefined) headers['Authorization'] = `Bearer ${this.apiKey}`
       const response = await this.fetchRoute(`/view?${params.toString()}`, { headers, signal: controller.signal })
       if (!response.ok) {
+        await response.body?.cancel()
         throw new ComfyUIError(`ComfyUI /view failed: HTTP ${response.status}`)
       }
-      const bytes = new Uint8Array(await response.arrayBuffer())
-      if (bytes.byteLength > this.maxMediaBytes) {
-        throw new ComfyUIError(`ComfyUI media too large: ${bytes.byteLength} bytes exceeds maxMediaBytes ${this.maxMediaBytes}`)
-      }
+      const bytes = await boundedBytes(response, this.maxMediaBytes)
       return { bytes, contentType: response.headers.get('content-type') ?? guessContentType(ref.filename) }
     } finally {
       clearTimeout(timer)
     }
   }
 
-  /**
-   * Stream one generated media file through GET /view without buffering it,
-   * honoring an optional Range header so the browser can seek in audio/video
-   * (the media proxy re-emits the status/headers and pipes the body). ComfyUI
-   * answers valid ranges with 206 + Content-Range and out-of-range starts with
-   * 416 — both pass through untouched. HEAD forwards as HEAD so no body is
-   * downloaded. The maxMediaBytes guard applies to the full 200 response only
-   * (a partial segment is bounded by definition).
-   */
+  /** Stream bounded actual bytes with a full-transfer deadline. Single ranges
+   * are capped to maxMediaBytes, allowing seeking within larger files. */
   async fetchViewStreamed(
     ref: ComfyUIMediaRef,
     rangeHeader?: string,
     method: 'GET' | 'HEAD' = 'GET',
   ): Promise<ComfyViewStream> {
+    const range = boundedRange(rangeHeader, this.maxMediaBytes)
     const params = new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder, type: ref.type })
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.connectTimeoutMs)
+    let response: Response | undefined
     try {
       const headers: Record<string, string> = {}
       if (this.apiKey !== undefined) headers['Authorization'] = `Bearer ${this.apiKey}`
-      if (rangeHeader !== undefined) headers['Range'] = rangeHeader
-      const response = await this.fetchRoute(`/view?${params.toString()}`, { headers, method, signal: controller.signal })
-      if (response.status !== 206 && response.status !== 416 && !response.ok) {
+      if (range !== undefined) headers['Range'] = range.header
+      response = await this.fetchRoute(`/view?${params.toString()}`, { headers, method, signal: controller.signal })
+      if (![200, 206, 416].includes(response.status)) {
         throw new ComfyUIError(`ComfyUI /view failed: HTTP ${response.status}`)
       }
-      if (response.status === 200) {
-        const contentLength = response.headers.get('content-length')
-        if (contentLength !== null && Number(contentLength) > this.maxMediaBytes) {
-          throw new ComfyUIError(`ComfyUI media too large: ${contentLength} bytes exceeds maxMediaBytes ${this.maxMediaBytes}`)
+      let expected: number | undefined
+      if (response.status === 206) {
+        const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') ?? '')
+        const [start, end, total] = (match?.slice(1) ?? []).map(Number)
+        if (range === undefined || start === undefined || end === undefined || total === undefined
+          || ![start, end, total].every(Number.isSafeInteger) || start < 0 || end < start || end >= total
+          || (range.start !== undefined ? start !== range.start || end > range.end! : end !== total - 1 || start !== Math.max(0, total - range.suffix!))) {
+          throw new ComfyUIError('ComfyUI invalid Content-Range')
         }
+        expected = end - start + 1
+        if (expected > this.maxMediaBytes) throw new ComfyUIError('ComfyUI range too large')
       }
-      return { status: response.status, headers: response.headers, body: response.body }
-    } finally {
+      const length = response.headers.get('content-length')
+      if (method !== 'HEAD' && response.status === 206 && response.body === null) throw new ComfyUIError('ComfyUI missing media range body')
+      if (method !== 'HEAD' && response.status !== 416 && length !== null && Number(length) > (expected ?? this.maxMediaBytes)) {
+        throw new ComfyUIError('ComfyUI body too large')
+      }
+      if (method === 'HEAD' || response.status === 416 || response.body === null) {
+        await response.body?.cancel()
+        clearTimeout(timer)
+        const head = new Headers(response.headers)
+        if (response.status === 416) head.set('content-length', '0')
+        return { status: response.status, headers: head, body: null }
+      }
+      const body = boundedStream(response.body, expected ?? this.maxMediaBytes, expected, controller, () => clearTimeout(timer))
+      return { status: response.status, headers: response.headers, body }
+    } catch (error) {
       clearTimeout(timer)
+      await response?.body?.cancel().catch(() => undefined)
+      controller.abort()
+      throw error
     }
   }
 
@@ -566,7 +682,13 @@ export class ComfyUIClient {
     }
     for (;;) {
       if (signal.aborted) return interrupted()
-      const entry = await this.getHistory(promptId)
+      let entry: ComfyUIHistoryEntry | undefined
+      try { entry = await this.getHistory(promptId, signal) }
+      catch (error) {
+        if (signal.aborted) return interrupted()
+        throw error
+      }
+      if (signal.aborted) return interrupted()
       if (entry !== undefined) {
         const status = entry.status
         if (status?.status_str === 'success' || status?.completed === true || hasMedia(entry)) {
