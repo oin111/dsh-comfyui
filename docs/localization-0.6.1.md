@@ -17,11 +17,11 @@ This update is LOCAL ONLY. Do not push, publish to npm, or create a release with
 - The workflow skill action schema is accepted by real DSH validators on both 0.2.0-rc.2 and 0.2.1-alpha.2.
 - Real browser settings on both hosts verified Russian default, legacy migration, ru/en switching across reloads, Save followed by config readback, and a successful localized connection test. These used a mocked ComfyUI system_stats endpoint and mock LLM; no GPU generation is claimed. Host UI language is independent from plugin UI language.
 
-## Protected blocker — full acceptance NOT complete
+## Removed maintainer document
 
-The approval layer denied the CLAUDE.md translation. It was NOT retried through another tool or edited by a bypass. Its original Chinese maintainer contract remains unchanged, including old language/README references. CLAUDE.md is not shipped in the npm artifact, but repository-wide removal of Chinese cannot be claimed.
+The user explicitly requested deletion of CLAUDE.md after its translation was blocked. The obsolete Chinese document is removed; no replacement agent-instruction file is created. Backend contracts remain covered by executable regressions and both READMEs.
 
-`npm run test:localization:full` intentionally remains failing on the protected CLAUDE.md check until an approved translation is possible. Default npm test checks production and editable docs, while this explicit additional release-acceptance gate includes the protected file. This is a blocker, not a skipped passing requirement.
+`npm run test:localization:full` now verifies that the obsolete document remains absent, alongside the production localization checks. Independent production/localization and security reviews passed at 053ed59; this deletion/test-only delta does not change shipped runtime files.
 
 CJK text retained in regression fixtures tests preservation of arbitrary user-authored content/paths; it is not shipped plugin prose.
 

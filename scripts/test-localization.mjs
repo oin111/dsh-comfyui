@@ -45,11 +45,9 @@ test('production sources, built text, editable documentation and package metadat
   assert.ok(!pkg.files.includes('README.zh-CN.md'))
 })
 
-// The protected maintainer file is a separate explicit gate, not a passing
-// assertion: its translation was denied by the approval layer. Enable this
-// gate for release acceptance; a failure must be reported, never hidden.
-if (process.env.LOCALIZATION_FULL === '1') test('protected maintainer contract contains no Han', () => {
-  assert.doesNotMatch(fs.readFileSync('CLAUDE.md', 'utf8'), /\p{Script=Han}/u, 'CLAUDE.md requires approved translation')
+// The user explicitly removed the obsolete Chinese maintainer document.
+if (process.env.LOCALIZATION_FULL === '1') test('obsolete maintainer document stays removed', () => {
+  assert.equal(fs.existsSync('CLAUDE.md'), false)
 })
 
 test('agent definitions, renderers, companion skill and generated pack prose are ru/en', async () => {

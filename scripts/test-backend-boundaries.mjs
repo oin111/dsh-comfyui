@@ -166,13 +166,6 @@ test('real host argument validators admit comfyui_workflow skill action', { time
   } finally { for (const d of disposers.reverse()) d(); await rm(dir, { recursive: true, force: true }) }
 })
 
-test('CLAUDE contract matches backend boundaries and trusted origin/deletion semantics', async () => {
-  const contract = await readFile(new URL('../CLAUDE.md', import.meta.url), 'utf8')
-  assert.ok(!contract.includes('Host/Referer'))
-  assert.ok(!contract.includes('POST，删记录 + 删输出文件'))
-  for (const token of ['8 MiB', '64 KiB', 'maxMediaBytes', 'Content-Range', 'connectTimeoutMs', 'redirect', 'cancelPrompt']) assert.ok(contract.includes(token), token)
-})
-
 test('READMEs state backend bounds and runtime comment reflects bind-address fallback', async () => {
   const root = new URL('../', import.meta.url)
   for (const name of ['README.md', 'README.en.md']) {
