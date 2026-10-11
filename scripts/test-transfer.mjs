@@ -160,7 +160,7 @@ check('foreign format refused', wrongFormat.ok === false, JSON.stringify(wrongFo
 const future = analyzeImportPackage(Buffer.from(zipSync({
   'preset.json': strToU8(JSON.stringify({ format: PRESET_FORMAT, version: 99, workflows: [] })),
 })))
-check('newer version refused with a hint', future.ok === false && (future.error ?? '').includes('升级'), JSON.stringify(future))
+check('newer version refused with a hint', future.ok === false && (future.error ?? '').includes('обновите плагин'), JSON.stringify(future))
 const analysis = analyzeImportPackage(zipBytes)
 check('analyze succeeds', analysis.ok === true, analysis.ok ? '' : analysis.error)
 check('three candidates', analysis.ok && analysis.analysis.workflows.length === 3)
@@ -205,7 +205,7 @@ check('bulk pack last file readable', packC !== undefined && packC.files.some((f
 console.log('clash + partial selection')
 const again = await applyImportPackage(fresh, zipBytes, [0])
 check('re-import succeeds', again.ok === true && again.imported === 1, JSON.stringify(again))
-check('clash gets the（导入）suffix', again.ok && again.results[0]?.newName === `${wfA.name}（导入）`, again.ok ? again.results[0]?.newName : '')
+check('clash gets the (импортировано)suffix', again.ok && again.results[0]?.newName === `${wfA.name} (импортировано)`, again.ok ? again.results[0]?.newName : '')
 const outOfRange = await applyImportPackage(fresh, zipBytes, [7])
 check('out-of-range selection refused', outOfRange.ok === false, JSON.stringify(outOfRange))
 

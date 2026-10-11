@@ -175,7 +175,7 @@ test('CLAUDE contract matches backend boundaries and trusted origin/deletion sem
 
 test('READMEs state backend bounds and runtime comment reflects bind-address fallback', async () => {
   const root = new URL('../', import.meta.url)
-  for (const name of ['README.md', 'README.en.md', 'README.zh-CN.md']) {
+  for (const name of ['README.md', 'README.en.md']) {
     const doc = await readFile(new URL(name, root), 'utf8')
     for (const token of ['8 MiB', '64 KiB', 'maxMediaBytes', 'Content-Range', 'connectTimeoutMs', 'redirect', 'cancelPrompt']) assert.ok(doc.includes(token), `${name}: ${token}`)
   }

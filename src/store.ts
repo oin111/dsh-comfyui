@@ -22,7 +22,7 @@ export interface StoredWorkflow {
   workflow: Record<string, { class_type: string; inputs: Record<string, unknown> }>
   /** Exposed adjustable parameters (auto-detected + user advanced). */
   parameters?: WorkflowParameter[]
-  /** Classification tags (preset kinds like 图生图 plus user-defined). */
+  /** Classification tags (preset kinds like image-to-image plus user-defined). */
   tags?: string[]
   /** Skill-pack directory name under `<dataDir>/skills/`; absent = no pack. */
   skillDir?: string

@@ -269,7 +269,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         // like a network problem with the address the user typed (Issue #11).
         sendJson(response, 200, {
           ok: false,
-          error: `${errorMessage(error)}（探测地址 ${runtime.getConfig().baseUrl}）`,
+          error: `${errorMessage(error)} (проверяемый адрес: ${runtime.getConfig().baseUrl})`,
           latencyMs: Date.now() - startedAt,
         })
       }
@@ -528,7 +528,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
             slots.push(null)
             break
           case 'clear': {
-            // "清除素材": the slot stays, its file is dropped.
+            // "Clear media": the slot stays, its file is dropped.
             if (index === undefined || index >= slots.length) {
               sendJson(response, 400, { error: 'index is required and must point at an existing slot' })
               return
@@ -537,7 +537,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
             break
           }
           case 'removeSlot': {
-            // "删除加载区": the slot itself goes away.
+            // "Delete load slot": the slot itself goes away.
             if (index === undefined || index >= slots.length) {
               sendJson(response, 400, { error: 'index is required and must point at an existing slot' })
               return
@@ -835,13 +835,13 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
       try {
         const raw = await readRawBody(request, MAX_ASSET_BYTES + 1)
         if (raw.length === 0) {
-          sendJson(response, 200, { ok: false, error: '文件为空' })
+          sendJson(response, 200, { ok: false, error: 'Файл пуст' })
           return
         }
         // Cheap upper bound before the store's per-bucket check, so an oversized
         // upload is rejected on the size it actually has.
         if (raw.length > MAX_ASSET_BYTES) {
-          sendJson(response, 200, { ok: false, error: `单个文件不能超过 ${Math.floor(MAX_ASSET_BYTES / 1024 / 1024)} MB` })
+          sendJson(response, 200, { ok: false, error: `Размер одного файла не должен превышать ${Math.floor(MAX_ASSET_BYTES / 1024 / 1024)} MB` })
           return
         }
         const result = await runtime.skillPacks.importFile(id, name, raw, bucket)
@@ -879,7 +879,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
       }
       const pack = await runtime.skillPacks.info(id)
       if (pack === undefined) {
-        sendJson(response, 200, { ok: false, error: '该工作流没有技能包' })
+        sendJson(response, 200, { ok: false, error: 'У этого рабочего процесса нет пакета навыков' })
         return
       }
       const opener = process.platform === 'win32'
@@ -1024,7 +1024,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
       // carries the file name + size so a stale download can't masquerade as
       // this export.
       lastExport = { at: new Date().toISOString(), count: result.count, names: result.names, warnings: result.warnings, filename: result.filename, size: result.bytes.length }
-      ctx.logger.info(`comfyui: 导出 ${result.count} 个工作流 → ${result.filename}（${result.names.join('、')}）${result.warnings.length > 0 ? ` 警告：${result.warnings.join('；')}` : ''}`)
+      ctx.logger.info(`comfyui: экспортировано ${result.count} рабочих процессов → ${result.filename}(${result.names.join(', ')})${result.warnings.length > 0 ? ` Предупреждения: ${result.warnings.join('; ')}` : ''}`)
       response.writeHead(200, {
         'content-type': 'application/zip',
         'content-length': String(result.bytes.length),
@@ -1067,7 +1067,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         return
       }
       lastExport = { at: new Date().toISOString(), count: result.count, names: result.names, warnings: result.warnings, filename, size: result.bytes.length }
-      ctx.logger.info(`comfyui: 导出 ${result.count} 个工作流 → ${filename}（${result.names.join('、')}）${result.warnings.length > 0 ? ` 警告：${result.warnings.join('；')}` : ''}`)
+      ctx.logger.info(`comfyui: экспортировано ${result.count} рабочих процессов → ${filename}(${result.names.join(', ')})${result.warnings.length > 0 ? ` Предупреждения: ${result.warnings.join('; ')}` : ''}`)
       response.writeHead(200, {
         'content-type': 'application/zip',
         'content-length': String(result.bytes.length),
@@ -1097,7 +1097,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
       }
       const raw = await readRawBody(request)
       if (raw.length > MAX_IMPORT_BYTES) {
-        sendJson(response, 413, { error: `预设包不能超过 ${Math.floor(MAX_IMPORT_BYTES / 1024 / 1024)} MB` })
+        sendJson(response, 413, { error: `Размер пакета пресетов не должен превышать ${Math.floor(MAX_IMPORT_BYTES / 1024 / 1024)} MB` })
         return
       }
       const result = analyzeImportPackage(raw)
@@ -1128,7 +1128,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         .filter((index) => Number.isInteger(index) && index >= 0)
       const raw = await readRawBody(request)
       if (raw.length > MAX_IMPORT_BYTES) {
-        sendJson(response, 413, { error: `预设包不能超过 ${Math.floor(MAX_IMPORT_BYTES / 1024 / 1024)} MB` })
+        sendJson(response, 413, { error: `Размер пакета пресетов не должен превышать ${Math.floor(MAX_IMPORT_BYTES / 1024 / 1024)} MB` })
         return
       }
       try {

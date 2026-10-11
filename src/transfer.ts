@@ -184,16 +184,16 @@ function unzipBounded(data: Uint8Array): Unzipped {
  * @param ids - workflow ids to export; unknown ids are skipped with a warning.
  */
 export async function buildExportPackage(host: TransferHost, ids: unknown): Promise<ExportResult> {
-  if (!Array.isArray(ids)) return fail('ids 必须是数组')
+  if (!Array.isArray(ids)) return fail('ids должен быть массивом')
   const wanted = [...new Set(ids.filter((id): id is string => typeof id === 'string' && id !== ''))]
-  if (wanted.length === 0) return fail('请先选择要导出的工作流')
+  if (wanted.length === 0) return fail('Сначала выберите рабочие процессы для экспорта')
   const zip: Zippable = {}
   const exported: PresetWorkflow[] = []
   const warnings: string[] = []
   for (const id of wanted) {
     const stored = await host.getWorkflow(id)
     if (stored === undefined) {
-      warnings.push(`工作流不存在，已跳过：${id}`)
+      warnings.push(`Рабочий процесс не найден и пропущен: ${id}`)
       continue
     }
     const entry: PresetWorkflow = {
@@ -209,13 +209,13 @@ export async function buildExportPackage(host: TransferHost, ids: unknown): Prom
     if (stored.skillDir !== undefined && stored.skillDir !== '') {
       const pack = await host.skillPacks.info(stored.id)
       if (pack === undefined) {
-        warnings.push(`技能包目录不可读，未随包导出：${stored.name}`)
+        warnings.push(`Каталог пакета навыков недоступен и не экспортирован: ${stored.name}`)
       } else {
         const files: Array<{ path: string; size: number }> = []
         for (const file of pack.files) {
           const raw = await host.skillPacks.readRaw(stored.id, file.path)
           if (!raw.ok) {
-            warnings.push(`技能包文件读取失败，已跳过：${stored.name} / ${file.path}`)
+            warnings.push(`Не удалось прочитать файл пакета навыков; пропущено: ${stored.name} / ${file.path}`)
             continue
           }
           zip[packEntry(stored.id, file.path)] = Uint8Array.from(raw.value.bytes)
@@ -224,13 +224,13 @@ export async function buildExportPackage(host: TransferHost, ids: unknown): Prom
         if (files.length > 0) {
           entry.skill = { files, dirs: [...pack.dirs] }
         } else {
-          warnings.push(`技能包没有可读取的文件，未随包导出：${stored.name}`)
+          warnings.push(`В пакете навыков нет доступных файлов; не экспортирован: ${stored.name}`)
         }
       }
     }
     exported.push(entry)
   }
-  if (exported.length === 0) return fail(warnings.length > 0 ? warnings.join('；') : '没有可导出的工作流')
+  if (exported.length === 0) return fail(warnings.length > 0 ? warnings.join('; ') : 'Нет рабочих процессов для экспорта')
   const manifest: PresetManifest = {
     format: PRESET_FORMAT,
     version: PRESET_VERSION,
@@ -253,15 +253,15 @@ export async function buildExportPackage(host: TransferHost, ids: unknown): Prom
 
 /** Structural check of preset.json; returns the normalized manifest or why it was refused. */
 function parseManifest(value: unknown): PresetManifest | string {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'preset.json 结构不正确'
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'Некорректная структура preset.json'
   const raw = value as Record<string, unknown>
-  if (raw.format !== PRESET_FORMAT) return '这不是 dsh-comfyui 工作流预设包'
+  if (raw.format !== PRESET_FORMAT) return 'Это не пакет пресетов dsh-comfyui'
   const version = raw.version
-  if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) return '预设包版本号不正确'
-  if (version > PRESET_VERSION) return `预设包版本过新（v${version}），请升级插件后再导入`
+  if (typeof version !== 'number' || !Number.isInteger(version) || version < 1) return 'Некорректная версия пакета пресетов'
+  if (version > PRESET_VERSION) return `Версия пакета пресетов слишком новая (v${version}); обновите плагин перед импортом`
   const workflowsRaw = raw.workflows
-  if (!Array.isArray(workflowsRaw)) return '预设包里没有工作流清单'
-  if (workflowsRaw.length > MAX_PACKAGE_WORKFLOWS) return `预设包包含的工作流过多（上限 ${MAX_PACKAGE_WORKFLOWS} 个）`
+  if (!Array.isArray(workflowsRaw)) return 'В пакете пресетов нет списка рабочих процессов'
+  if (workflowsRaw.length > MAX_PACKAGE_WORKFLOWS) return `Слишком много рабочих процессов в пакете (максимум ${MAX_PACKAGE_WORKFLOWS})`
   const workflows: PresetWorkflow[] = []
   for (const item of workflowsRaw) {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) continue
@@ -280,7 +280,7 @@ function parseManifest(value: unknown): PresetManifest | string {
       workflow: w.workflow as PresetWorkflow['workflow'],
     })
   }
-  if (workflows.length === 0) return '预设包里没有结构完整的工作流'
+  if (workflows.length === 0) return 'В пакете нет корректных рабочих процессов'
   return {
     format: PRESET_FORMAT,
     version,
@@ -311,20 +311,20 @@ function parseSkillRef(value: unknown): PresetSkillRef | null {
 
 /** Parse and validate one uploaded archive without touching the disk. */
 function readPackage(bytes: Buffer): { ok: true; manifest: PresetManifest; files: Unzipped } | { ok: false; error: string } {
-  if (bytes.length === 0) return fail('上传内容为空')
+  if (bytes.length === 0) return fail('Загружаемый файл пуст')
   let files: Unzipped
   try {
     files = unzipBounded(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength))
   } catch (error) {
-    return fail(`无法读取预设包：${error instanceof Error ? error.message : String(error)}`)
+    return fail(`Не удалось прочитать пакет пресетов: ${error instanceof Error ? error.message : String(error)}`)
   }
   const raw = files[MANIFEST_ENTRY]
-  if (raw === undefined) return fail(`预设包缺少 ${MANIFEST_ENTRY}，不是有效的预设包`)
+  if (raw === undefined) return fail(`В пакете отсутствует ${MANIFEST_ENTRY}; пакет некорректен`)
   let manifest: unknown
   try {
     manifest = JSON.parse(strFromU8(raw))
   } catch {
-    return fail(`${MANIFEST_ENTRY} 不是有效的 JSON`)
+    return fail(`${MANIFEST_ENTRY} не является корректным JSON`)
   }
   const parsed = parseManifest(manifest)
   return typeof parsed === 'string' ? fail(parsed) : { ok: true, manifest: parsed, files }
@@ -347,8 +347,8 @@ export function analyzeImportPackage(bytes: Buffer): { ok: true; analysis: Impor
       for (const file of entry.skill.files) {
         // Flag the grammar problem at analyze time (visible before anything
         // is written); apply re-checks and skips the same paths regardless.
-        if (parseSkillPath(file.path).ok === false) warnings.push(`技能包路径不合法：${file.path}`)
-        else if (files[packEntry(entry.id, file.path)] === undefined) warnings.push(`包内缺少技能包文件：${file.path}`)
+        if (parseSkillPath(file.path).ok === false) warnings.push(`Недопустимый путь в пакете навыков: ${file.path}`)
+        else if (files[packEntry(entry.id, file.path)] === undefined) warnings.push(`В пакете отсутствует файл навыков: ${file.path}`)
       }
       skill = {
         fileCount: entry.skill.files.length,
@@ -407,13 +407,13 @@ function uniqueName(used: Set<string>, base: string): string {
     used.add(clean)
     return clean
   }
-  const marked = `${clean}（导入）`
+  const marked = `${clean} (импортировано)`
   if (!used.has(marked)) {
     used.add(marked)
     return marked
   }
   for (let i = 2; ; i++) {
-    const candidate = `${clean}（导入 ${i}）`
+    const candidate = `${clean} (импортировано ${i})`
     if (!used.has(candidate)) {
       used.add(candidate)
       return candidate
@@ -436,7 +436,7 @@ async function importSkillPack(
 ): Promise<void> {
   const enabled = await host.skillPacks.enable(newId)
   if (!enabled.ok) {
-    warnings.push(`技能包挂载失败：${enabled.error}`)
+    warnings.push(`Не удалось подключить пакет навыков: ${enabled.error}`)
     return
   }
   // One batched write for the whole pack: the store checks its limits once
@@ -448,39 +448,39 @@ async function importSkillPack(
   for (const file of skill.files) {
     const parsed = parseSkillPath(file.path)
     if (!parsed.ok) {
-      warnings.push(`技能包路径不合法，已跳过：${file.path}`)
+      warnings.push(`Недопустимый путь в пакете навыков; пропущен: ${file.path}`)
       continue
     }
     const entry = files[packEntry(sourceId, file.path)]
     if (entry === undefined) {
-      warnings.push(`包内缺少技能包文件：${file.path}`)
+      warnings.push(`В пакете отсутствует файл навыков: ${file.path}`)
       continue
     }
     const bytes = Buffer.from(entry)
     if (bytes.length > sizeLimitOf(parsed.value.file)) {
-      warnings.push(`技能包文件超过大小上限，已跳过：${file.path}（${Math.ceil(bytes.length / 1024)} KB）`)
+      warnings.push(`Файл пакета навыков превышает лимит; пропущен: ${file.path}(${Math.ceil(bytes.length / 1024)} KB)`)
       continue
     }
     entries.push({ path: file.path, bytes })
   }
   if (entries.length === 0) {
     await host.skillPacks.disable(newId)
-    warnings.push('技能包没有一个文件写入成功，已放弃挂载')
+    warnings.push('Не удалось записать ни один файл навыков; подключение отменено')
     return
   }
   const written = await host.skillPacks.importFiles(newId, entries)
   if (!written.ok) {
     await host.skillPacks.disable(newId)
-    warnings.push(`技能包还原失败，已放弃挂载：${written.error}`)
+    warnings.push(`Не удалось восстановить пакет навыков; подключение отменено: ${written.error}`)
     return
   }
   for (const dir of skill.dirs) {
     const made = await host.skillPacks.makeDir(newId, dir)
-    if (!made.ok) warnings.push(`技能包子目录创建失败：${dir}`)
+    if (!made.ok) warnings.push(`Не удалось создать подкаталог пакета навыков: ${dir}`)
   }
   if (required) {
     const gate = await host.skillPacks.setRequired(newId, true)
-    if (!gate.ok) warnings.push(`必读标记设置失败：${gate.error}`)
+    if (!gate.ok) warnings.push(`Не удалось установить обязательность чтения: ${gate.error}`)
   }
   // One limit tripping on every remaining file reads as an error wall that
   // buries the row and the user's trust with it — keep the first few and
@@ -488,7 +488,7 @@ async function importSkillPack(
   if (warnings.length > 12) {
     const dropped = warnings.length - 12
     warnings.length = 12
-    warnings.push(`……其余 ${dropped} 条警告已省略`)
+    warnings.push(`… Остальные предупреждения (${dropped}) опущены`)
   }
 }
 
@@ -507,10 +507,10 @@ export async function applyImportPackage(
   const read = readPackage(bytes)
   if (!read.ok) return read
   const { manifest, files } = read
-  if (!Array.isArray(selected)) return fail('请先选择要导入的工作流')
+  if (!Array.isArray(selected)) return fail('Сначала выберите рабочие процессы для импорта')
   const wanted = [...new Set(selected.filter((index): index is number =>
     typeof index === 'number' && Number.isInteger(index) && index >= 0 && index < manifest.workflows.length))]
-  if (wanted.length === 0) return fail('请先选择要导入的工作流')
+  if (wanted.length === 0) return fail('Сначала выберите рабочие процессы для импорта')
   const usedNames = new Set((await host.listWorkflows()).map((workflow) => workflow.name))
   const results: ImportOutcome[] = []
   let imported = 0

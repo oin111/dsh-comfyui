@@ -1,22 +1,21 @@
-# dsh-comfyui 0.4.0 发布决策（已执行）
+# Historical 0.4.0 release decisions
 
-**时间**: 2026-09-02 02:00 附近
-**状态**: 代码与清单已改完，待用户自行 npm publish
+Recorded near 2026-09-02 02:00. At that point code/manifest changes were applied locally and awaited the user's npm publication. These are historical upstream decisions, not the current 0.6.x compatibility range.
 
-## 背景
+## Background
 
-用户担忧 0.1.2 API 迁移版插件推送给老宿主（0.1.1-rc.2）用户会导致 dsh 整体启动失败（fail-loud，不隔离插件）。诊断确认双向不兼容后，用户拍板：上安全栏 + 明确版本范围 + 去 beta。
+The user was concerned that distributing the 0.1.2 API migration to old hosts (0.1.1-rc.2) would fail the entire DSH boot rather than isolate the plugin. After confirming incompatibility in both directions, the user chose an install safety gate, explicit version ranges and removal of the beta label.
 
-## 已执行改动（D:\dsh-comfyui，均未提交）
+## Changes made at the time (D:\dsh-comfyui, then uncommitted)
 
-1. `package.json` 删除 `peerDependenciesMeta` 中 dsh-settings 的 `optional: true` → peer 必选。**这是关键一步**：dshmarket 兼容预检（compatibility.ts）对 optional peer 一律降级为非风险不报警，摘掉后老宿主上安装会触发 `soft-incompatible` 风险横幅 + 一键回滚。
-2. `package.json` peer 范围 `@deepseek-ai/dsh-settings: ^0.1.2-alpha.4`（保留 alpha 标签，覆盖未来 0.1.x 正式版）。
-3. 版本 `0.3.0-beta.6` → `0.4.0`（用户说"0.40"，按 semver 惯例落为 0.4.0，已告知可改字面 0.40.0）。
-4. README.md / README.en.md 徽章下各加一行显式要求：≥ 0.1.2-alpha.4，老 dsh 留 0.3.x 线。
-5. `pnpm typecheck` 双 tsconfig 通过；发布走 `npm publish`（prepack 自动 build）。
+1. Removed dsh-settings optional:true from peerDependenciesMeta, making its install peer mandatory. dshmarket compatibility.ts otherwise downgraded optional-peer conflicts to non-risk without warning. This enabled the soft-incompatible risk banner and one-click rollback on old hosts.
+2. Set dsh-settings peer range to ^0.1.2-alpha.4, retaining the alpha baseline and covering later 0.1.x stable versions.
+3. Changed 0.3.0-beta.6 to 0.4.0. The user's “0.40” was interpreted as 0.4.0 using semver convention, with the option to choose literal 0.40.0 communicated.
+4. Added explicit >=0.1.2-alpha.4 requirements to Russian and English READMEs; old hosts stayed on 0.3.x.
+5. pnpm typecheck passed both tsconfigs. Publication was to use npm publish (prepack automatically builds), only when the user authorized it.
 
-## 发布纪律
+## Release discipline
 
-- 0.3.x 老线留在 npm 不撤，供老宿主用户。
-- 不 force 越过 dshmarket 发布龄冷却（RELEASE_TOO_FRESH），让灰度窗口自然过滤。
-- 不做双版本兼容 shim（宿主 0.1.x 预发布不承诺兼容，版本配对是生态约定）。
+- Keep the old 0.3.x npm line available to old-host users; do not unpublish it.
+- Do not force bypass dshmarket RELEASE_TOO_FRESH cooldown; allow its staged rollout window.
+- Do not add a dual-version compatibility shim: prerelease 0.1.x hosts did not promise compatibility, and matched host/plugin versions were the ecosystem convention.

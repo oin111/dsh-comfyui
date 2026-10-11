@@ -1,6 +1,6 @@
 # @oin111/dsh-comfyui
 
-[Русский](README.md) | **English** | [中文](README.zh-CN.md)
+[Русский](README.md) | **English**
 
 <p align="center">
   <img src="logo.png" width="480" alt="dsh-comfyui logo" />
@@ -18,7 +18,7 @@
 > | **@oin111/dsh-comfyui 0.6.x** | **0.2.0-rc.2 – 0.2.x** (incl. 0.2.1 alphas) | Background jobs follow the 0.2 contract (owner = SessionId, outcome in `result`); cancel only touches this plugin's prompt; works in PTC mode |
 > | upstream dsh-comfyui 0.5.x | 0.1.2 – 0.1.7 | Use upstream on older hosts |
 >
-> Install: `dsh plugin --profile web add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.0/oin111-dsh-comfyui-0.6.0.tgz`
+> Install: `dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.1.tgz`
 
 ## Backend safety and transfer limits
 
@@ -28,6 +28,8 @@
 - All backend HTTP endpoints, including uploads and the `/api` fallback, refuse redirects (`redirect`); configure the final backend URL directly. The native WebSocket progress handshake also does not follow redirects.
 - Cancellation aborts an in-flight history fetch. Even if history fails concurrently, the plugin awaits a targeted `cancelPrompt` attempt before reporting killed/interrupted or removing tracking. Cleanup is best-effort: an unreachable backend may continue work. Only a queue-confirmed matching running prompt is interrupted; unrelated prompts are not intentionally stopped.
 - Media origins use only an admitted request's Host and the host server's protocol, never Referer. The fallback is the concrete bind address; LAN detection is used only for wildcard binds. Asset deletion attempts file removal only under an explicitly configured absolute, accessible `outputDir`; otherwise it removes only the index record.
+
+Version **0.6.1** is a local-only localization update, not yet published. Run `npm pack` before the local install commands below. UI defaults to Russian; English preferences are preserved and old `zh` preferences migrate to Russian. Agent tool descriptions and the companion skill use English, with Russian as the default response language.
 
 ## Features
 
@@ -50,7 +52,6 @@ A right-docked panel with three tabs:
 
 Clicking the "ComfyUI Panel" button in the session header probes the backend's connection to ComfyUI: when it cannot connect, the panel closes again (the button does not stay highlighted) and a toast at the top of the page explains why (with the concrete reason), asking you to start the local ComfyUI (so the backend can see its port) or check the remote server URL in settings; a healthy connection stays silent, with a brief "Connected" note only when it recovers from a failure.
 
-<p align="center"><img src="images/panel.png" width="70%" alt="Main panel: workflows / assets / queue" title="Main panel: workflows / assets / queue" /></p>
 
 ### Load area (media loader)
 
@@ -70,7 +71,7 @@ A parameter list tells the agent which knobs exist, not what the workflow is *fo
 ```
 
 - **Progressive disclosure, no resident context cost**: `comfyui_workflow list` shows one summary line → `action: skill` fetches the SKILL.md body once the workflow is chosen → a referenced document is read only when the body points at it. Dozens of workflows can carry full packs, and the daily context cost stays one line each.
-- **Edited in the panel**: file list + editor, import (auto-bucketed by extension), custom subdirectories, image preview, and the whole pack root can be moved to another drive / a synced folder (the `技能包目录` setting).
+- **Edited in the panel**: file list + editor, import (auto-bucketed by extension), custom subdirectories, image preview, and the whole pack root can be moved to another drive / a synced folder (the `Skill pack directory` setting).
 - **The agent can write it too**: the `comfyui_skill` tool lets the agent read and author a pack — `append` a pitfall to SKILL.md and the next session (even another one) reuses that experience.
 - **Read-before-run**: a "required" flag makes `run` refuse until the skill pack has been read in this session, with an error pointing to `action: skill`.
 
@@ -78,15 +79,15 @@ A parameter list tells the agent which knobs exist, not what the workflow is *fo
 
 Generated files are served through a same-origin route (`/comfyui/media`) addressed by file name, independent of ComfyUI's in-memory history — old results keep opening after a restart or a history clear. The browser never touches ComfyUI directly: no CORS, no mixed content, and the API key never leaves the host.
 
-The DH settings page gets a "ComfyUI" section: server address, API key env var name, local ComfyUI directories, media host, connection test and a zh/en UI language switch — applied immediately, no `cordis.yml` edits needed.
+The DH settings page gets a "ComfyUI" section: server address, API key env var name, local ComfyUI directories, media host, connection test and a ru/en UI language switch — applied immediately, no `cordis.yml` edits needed.
 
 ## Install
 
 ```sh
 # web profile
-dsh plugin --profile web add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.0/oin111-dsh-comfyui-0.6.0.tgz
+dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.1.tgz
 # desktop profile
-dsh plugin --profile desktop add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.0/oin111-dsh-comfyui-0.6.0.tgz
+dsh plugin --profile desktop add ./oin111-dsh-comfyui-0.6.1.tgz
 ```
 
 After restarting the app: a panel entry appears in the sidebar, a "ComfyUI" section in settings, and the agent gets all tools plus the companion skill right away.

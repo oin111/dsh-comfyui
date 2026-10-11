@@ -3,7 +3,7 @@
  * test bench holding several independent flows at once: `groups` are visual
  * rectangles only, and the executable unit is a connected component over the
  * graph links (with bypassed and dangling nodes excluded). The analysis feeds
- * the extract (拆分) choices in the panel and the agent-facing skill.
+ * the extract (split) choices in the panel and the agent-facing skill.
  */
 
 import { isVirtualNodeType, normalizeLinks, resolveVirtualLinks } from './graph.js'
@@ -78,7 +78,7 @@ function nodeInGroup(node: GraphNodeLike, group: GraphGroupLike): boolean {
  */
 export function analyzeGraph(graph: unknown): GraphAnalysis | { ok: false; error: string } {
   if (!isObject(graph) || !Array.isArray(graph.nodes) || !Array.isArray(graph.links)) {
-    return { ok: false, error: '无法解析图文件（缺少 nodes/links）' }
+    return { ok: false, error: 'Не удалось разобрать граф (нет nodes/links)' }
   }
   const nodes = graph.nodes as GraphNodeLike[]
   // Virtual nodes (Set/Get wireless links, rgthree mode relays) are rewired
@@ -153,7 +153,7 @@ export function analyzeGraph(graph: unknown): GraphAnalysis | { ok: false; error
     const members = memberIds.map((id) => activeById.get(id)!)
     const groupTitles = groups
       .filter((group) => members.some((member) => nodeInGroup(member, group)))
-      .map((group) => group.title ?? '(未命名组)')
+      .map((group) => group.title ?? '(группа без названия)')
     const nodeTypes = [...new Set(members.map((member) => member.type).filter((type) => type !== ''))]
     components.push({ index: components.length + 1, nodeIds: memberIds, size: memberIds.length, groups: groupTitles, nodeTypes })
   }

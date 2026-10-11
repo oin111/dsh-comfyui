@@ -161,7 +161,12 @@ function isSkillImage(path: string): boolean {
 
 /** Preset workflow classification tags (users can add custom ones). Stored as
  * plain text, so the tag identity is the label itself. */
-const PRESET_TAGS = ['图生图', '文生图', '文生视频', '图生视频', '参考生视频', '文生音频', '参考生音频']
+const PRESET_TAGS = ['image-to-image', 'text-to-image', 'text-to-video', 'image-to-video', 'reference-to-video', 'text-to-audio', 'reference-to-audio']
+
+/** Preserve stored/custom tag identities; translate only known preset labels. */
+function tagLabel(t: ComfyUIPanelProps['t'], tag: string): string {
+  return PRESET_TAGS.includes(tag) ? t(`tag_${tag}`) : tag
+}
 
 /** A workflow saved on the ComfyUI server (userdata/workflows). */
 interface ComfyUIWorkflowEntry {
@@ -1288,7 +1293,7 @@ interface LoadAreaFile {
  *
  * A lone slot stretches across the panel; from two slots on they share a
  * fixed width and wrap into rows. A slot is either filled with a file or
- * empty (added but not yet picked, or emptied through the picker's "空"
+ * empty (added but not yet picked, or emptied through the picker's "None"
  * tile); the whole card is the pick button, and hovering reveals an × in the
  * corner that removes the slot. Filled slots feed the workflow's loader
  * parameters in order, so a run that takes two reference images picks up
@@ -1359,7 +1364,7 @@ function LoadArea(props: { t: ComfyUIPanelProps['t']; onNotice: (message: string
     if (ok) props.onNotice(`${props.t('wfLoadPicked')}：${file.name}`)
   }
 
-  /** "＋ 添加加载区": opens a slot and goes straight to the picker for it, so
+  /** "+ Add load slot": opens a slot and goes straight to the picker for it, so
    * adding material is one gesture; closing the picker leaves the empty slot. */
   const addSlot = async (): Promise<void> => {
     const index = slots.length
@@ -1408,8 +1413,8 @@ function LoadArea(props: { t: ComfyUIPanelProps['t']; onNotice: (message: string
 }
 
 /** One load-area slot card. The card is the pick button (empty slots show
- * "加载位 N / 添加素材"); the × in the corner, revealed on hover, removes the
- * slot. Emptying a slot without removing it is done from the picker's "空"
+ * "Slot N / Add media"); the × in the corner, revealed on hover, removes the
+ * slot. Emptying a slot without removing it is done from the picker's "None"
  * tile, so the card carries no button row of its own. */
 function LoadSlot(props: {
   t: ComfyUIPanelProps['t']
@@ -1451,7 +1456,7 @@ function LoadSlot(props: {
   )
 }
 
-/** The load-area picker dialog: tab bar (全部/已导入/已生成) with a
+/** The load-area picker dialog: tab bar (All/Imported/Generated) with a
  * paste/click upload zone on the right, and a masonry image grid below. */
 function LoadPicker(props: {
   t: ComfyUIPanelProps['t']
@@ -1575,7 +1580,7 @@ function LoadPicker(props: {
         ? h('div', { className: 'dsc-picker-empty' }, props.t('wfLoadNoFiles'))
         : h('div', { className: 'dsc-picker-grid' },
           columns.map((column, columnIndex) => h('div', { key: columnIndex, className: 'dsc-picker-col' },
-            // "空": clears the slot the picker was opened for, so a slot can be
+            // "None": clears the slot the picker was opened for, so a slot can be
             // emptied without deleting it.
             columnIndex === 0 && props.onClear !== undefined
               ? h('div', {
@@ -1648,7 +1653,7 @@ function LoadPicker(props: {
   )
 }
 
-/** Tag editor: preset classification chips (图生图 etc.) toggle on/off, plus
+/** Tag editor: preset classification chips (image-to-image etc.) toggle on/off, plus
  * free-form custom tags added with Enter and removed by clicking. */
 function TagEditor(props: {
   t: ComfyUIPanelProps['t']
@@ -1676,7 +1681,7 @@ function TagEditor(props: {
         key: tag,
         className: `dsc-tag-chip${props.tags.includes(tag) ? ' dsc-tag-chip--active' : ''}`,
         onClick: () => toggle(tag),
-      }, tag)),
+      }, tagLabel(props.t, tag))),
     ),
     customTags.length > 0
       ? h('div', { className: 'dsc-tag-row' },
@@ -1783,7 +1788,7 @@ function SkillPackEditor(props: {
 
   /** Re-read the pack listing and — only when nothing is unsaved — the file
    * currently open, so files added or replaced outside this panel (the agent
-   * writing via comfyui_skill, or the file manager after `打开目录`) show up
+   * writing via comfyui_skill, or the file manager after `Open folder`) show up
    * without leaving and re-entering the view. */
   const refreshFiles = async (): Promise<void> => {
     setBusy(true)
@@ -2571,7 +2576,7 @@ function WorkflowsTab({ t }: ComfyUIPanelProps): ReturnType<typeof h> {
               onChange: (event: { target: { value: string } }) => setTagFilter(event.target.value === '' ? null : event.target.value),
             },
               h('option', { value: '' }, `${t('wfTagAll')} (${list.length})`),
-              visibleTags.map((tag) => h('option', { key: tag, value: tag }, `${tag} (${tagCounts.get(tag) ?? 0})`)),
+              visibleTags.map((tag) => h('option', { key: tag, value: tag }, `${tagLabel(t, tag)} (${tagCounts.get(tag) ?? 0})`)),
             ),
           )
         : null,
@@ -2581,7 +2586,7 @@ function WorkflowsTab({ t }: ComfyUIPanelProps): ReturnType<typeof h> {
           h('div', { className: 'dsc-wf-top' },
             h('div', { className: 'dsc-wf-name', title: workflow.name }, workflow.name),
             (workflow.tags ?? []).length > 0
-              ? h('div', { className: 'dsc-wf-tags' }, (workflow.tags ?? []).map((tag) => h('span', { key: tag, className: 'dsc-tag-chip dsc-tag-chip--mini' }, tag)))
+              ? h('div', { className: 'dsc-wf-tags' }, (workflow.tags ?? []).map((tag) => h('span', { key: tag, className: 'dsc-tag-chip dsc-tag-chip--mini' }, tagLabel(t, tag))))
               : null,
             workflow.skillDir !== undefined
               ? h('span', { className: 'dsc-badge dsc-badge--ok', title: t('skillBadgeHint') }, workflow.requireSkill === true ? t('skillBadgeRequired') : t('skillBadge'))
