@@ -105,6 +105,44 @@ test('UTF-8 names and hostile basenames get safe bounded filenames without losin
   })
 })
 
+for (const tail of [' ', '.']) {
+  test(`final filename removes ${tail === ' ' ? 'space' : 'dot'} exposed by UTF-8 byte truncation`, { timeout: 5000 }, async () => {
+    await fixture(async ({ get, calls }) => {
+      for (const [input, expected] of [
+        ['a'.repeat(179) + tail + 'z'.repeat(100), 'a'.repeat(179)],
+        ['я'.repeat(89) + ' ' + tail + 'z'.repeat(100), 'я'.repeat(89)],
+      ]) {
+        const response = await get(input)
+        assert.equal(response.status, 200)
+        const filename = name(response)
+        assert.doesNotMatch(filename, /[. ]$/)
+        assert.equal(filename, expected)
+        assert.ok(Buffer.byteLength(filename) <= 180)
+        const fallback = /filename="([^"]*)";/.exec(response.headers.get('content-disposition'))?.[1]
+        assert.equal(fallback, filename.replace(/[^\x20-\x7e]/g, '_'))
+        assert.doesNotMatch(fallback, /[. ]$/)
+        assert.ok(Buffer.byteLength(fallback) <= 180)
+        assert.equal(new URL(calls.at(-1).url, 'http://localhost').searchParams.get('filename'), input)
+        assert.equal(response.headers.get('x-content-type-options'), 'nosniff')
+        assert.equal(response.headers.get('content-security-policy'), "sandbox; default-src 'none'")
+        assert.equal(await response.text(), 'abcd')
+      }
+    })
+  })
+}
+
+test('final truncation cleanup does not expose a Windows device name', { timeout: 5000 }, async () => {
+  await fixture(async ({ get }) => {
+    for (const device of ['CON', 'lpt1', 'COM¹']) {
+      const response = await get(device + ' '.repeat(180) + 'z')
+      assert.equal(name(response), `_${device}`)
+      const fallback = /filename="([^"]*)";/.exec(response.headers.get('content-disposition'))?.[1]
+      assert.equal(fallback, `_${device}`.replace(/[^\x20-\x7e]/g, '_'))
+      assert.equal(await response.text(), 'abcd')
+    }
+  })
+})
+
 test('active content stays attachment/octet-stream with sandbox and nosniff; Range and HEAD keep filenames', { timeout: 5000 }, async () => {
   await fixture(async ({ get, calls }) => {
     for (const file of ['unsafe.svg', 'unsafe.html']) {

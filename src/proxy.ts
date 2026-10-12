@@ -37,7 +37,10 @@ function safeDownloadFilename(input: string): string {
     bounded += char
     bytes += size
   }
-  return bounded + extension
+  // Truncation can expose an internal dot or space as the final character.
+  name = (bounded + extension).replace(/[. ]+$/g, '') || 'media'
+  // Cleanup can also expose a bare device name; its short prefix fits the budget.
+  return /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])$/i.test(name) ? `_${name}` : name
 }
 
 /**
