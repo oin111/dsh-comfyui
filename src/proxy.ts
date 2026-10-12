@@ -18,6 +18,28 @@ import type { RouteRegistrar } from './guard.js'
 /** Media types that cannot execute in the app origin. */
 const PASSIVE_MEDIA = /^(image\/(png|jpeg|webp|gif|bmp|avif)|video\/[a-z0-9.+-]+|audio\/[a-z0-9.+-]+)$/
 
+/** Download suggestion only; never changes the reference sent to ComfyUI. */
+function safeDownloadFilename(input: string): string {
+  let name = (input.split(/[\\/]/).pop() ?? '')
+    .replace(/[\p{Cc}\p{Cf}\p{Cs}\uFFFD"<>:|?*%]/gu, '_')
+    .replace(/^[. ]+|[. ]+$/g, '')
+  if (!name) name = 'media'
+  // Windows device names remain reserved even with an extension.
+  if (/^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\s*\.|$)/i.test(name)) name = `_${name}`
+  const extension = /\.[a-z0-9]{1,16}$/i.exec(name)?.[0] ?? ''
+  const stem = extension ? name.slice(0, -extension.length) : name
+  const budget = 180 - Buffer.byteLength(extension)
+  let bounded = ''
+  let bytes = 0
+  for (const char of stem) {
+    const size = Buffer.byteLength(char)
+    if (bytes + size > budget) break
+    bounded += char
+    bytes += size
+  }
+  return bounded + extension
+}
+
 /**
  * Relay one ComfyUI /view download to the browser in streaming fashion.
  * Browser <audio>/<video> players seek with `Range: bytes=…` requests; without
@@ -47,7 +69,11 @@ async function relayViewStream(
     'accept-ranges': 'bytes',
     'cache-control': 'private, max-age=3600',
   }
-  if (!passive) head['content-disposition'] = 'attachment'
+  const filename = safeDownloadFilename(ref.filename)
+  const fallback = filename.replace(/[^\x20-\x7e]/g, '_')
+  const encoded = encodeURIComponent(filename).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
+  // Build locally from the reference, not the untrusted upstream disposition.
+  head['content-disposition'] = `${passive ? 'inline' : 'attachment'}; filename="${fallback}"; filename*=UTF-8''${encoded}`
   const contentLength = headers.get('content-length')
   if (contentLength !== null) head['content-length'] = contentLength
   const contentRange = headers.get('content-range')
