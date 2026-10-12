@@ -10,6 +10,7 @@ import { getJson, getList, postJson, postRaw } from './api.ts'
 import { panelStore, usePanelOpen, usePanelTab } from './panel-store.ts'
 import { ComfyUIIcon } from './trigger.tsx'
 import { Lightbox } from './lightbox.js'
+import { isLoraInput, isLoraValue } from '../lora.js'
 
 /** Panel geometry: pixel position/size once the user dragged or resized. */
 interface PanelGeom {
@@ -264,10 +265,10 @@ interface WorkflowParameter {
   id: string
   name: string
   label: string
-  type: 'string' | 'number' | 'boolean'
+  type: 'string' | 'number' | 'boolean' | 'lora'
   nodeId: string
   inputKey: string
-  default: string | number | boolean
+  default: string | number | boolean | { on: boolean; lora: string; strength: number; strengthTwo?: number | null; [key: string]: unknown }
   description?: string
   random?: boolean
   /** Declared numeric type of the node input; absent = unknown (decimals ok). */
@@ -366,10 +367,10 @@ function inputValueKind(value: unknown): string {
 /** Read a parameter default as a boolean. Defaults saved before the editor
  * had a checkbox are strings ("true"/"false"), so they are coerced here rather
  * than silently reading as `true` for every non-empty string. */
-function asBool(value: string | number | boolean): boolean {
+function asBool(value: WorkflowParameter['default']): boolean {
   if (typeof value === 'boolean') return value
   if (typeof value === 'number') return value !== 0
-  return /^(true|1|yes|on)$/i.test(value.trim())
+  return typeof value === 'string' && /^(true|1|yes|on)$/i.test(value.trim())
 }
 
 /** Tooltip for a number field: the declared type and bounds, when known. */
@@ -717,12 +718,12 @@ function ParameterEditor(props: {
 
   const nodeEntries = Object.entries(workflow).map(([id, raw]) => [id, raw as { class_type?: string; inputs?: Record<string, unknown> }] as const)
   const advNodeInfo = nodeEntries.find(([id]) => id === advNode)?.[1]
-  // Widget-valued inputs are offered without filtering (the loader `upload`
-  // pseudo-input included). Inputs currently fed by a link ([nodeId, slot])
-  // are left out: they carry no value to edit, and exposing one only creates
-  // a parameter that would fight the connection.
+  // Only primitive widgets and validated class-scoped LoRA rows have editors.
+  // Links, nulls, arrays and other objects must not become scalar parameters.
   const advInputs = advNodeInfo !== undefined && advNodeInfo.inputs !== undefined
-    ? Object.entries(advNodeInfo.inputs).filter(([, value]) => !isLinkValue(value))
+    ? Object.entries(advNodeInfo.inputs).filter(([key, value]) =>
+        typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ||
+        (isLoraInput(advNodeInfo.class_type ?? '', key) && isLoraValue(value)))
     : []
   const selectedInput = advInputs.find(([key]) => key === advInput)
 
@@ -753,10 +754,9 @@ function ParameterEditor(props: {
   const addAdvanced = async (): Promise<void> => {
     if (advNode === '' || advInput === '' || selectedInput === undefined || advNodeInfo === undefined) return
     const [, value] = selectedInput
-    // A linked or object-valued input has no widget value to start from: it
-    // becomes a string parameter with an empty default, which the run path
-    // reads as "leave the link alone unless a value is passed".
-    const type = typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string'
+    const lora = isLoraInput(advNodeInfo.class_type ?? '', advInput) && isLoraValue(value)
+    if (!lora && typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return
+    const type = lora ? 'lora' : typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string'
 
     // Generic media-list heuristic: a string holding a JSON array of
     // {kind, file, ...} items (e.g. MiniMaxH3 media_state) becomes one
@@ -823,7 +823,7 @@ function ParameterEditor(props: {
       type,
       nodeId: advNode,
       inputKey: advInput,
-      default: typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? value : '',
+      default: isLoraValue(value) ? { ...value } : typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? value : '',
       numberKind: type === 'number' ? numberSpec?.kind : undefined,
       min: type === 'number' ? numberSpec?.min : undefined,
       max: type === 'number' ? numberSpec?.max : undefined,
@@ -838,7 +838,7 @@ function ParameterEditor(props: {
   }
 
   /** Update a parameter's default; DynamicCombo parents refresh their child (size) parameter. */
-  const updateDefault = (index: number, value: string | number | boolean): void => {
+  const updateDefault = (index: number, value: WorkflowParameter['default']): void => {
     update(index, { default: value })
     const param = params[index]
     if (param === undefined || typeof value !== 'string') return
@@ -872,7 +872,37 @@ function ParameterEditor(props: {
             onChange: (event: { target: { value: string } }) => update(index, { label: event.target.value }),
           }),
         ),
-        param.upload === 'media'
+        param.type === 'lora' && isLoraValue(param.default)
+          ? h('div', { className: 'dsc-lora-editor' },
+              h('label', null, t('loraEnable'), h('input', {
+                type: 'checkbox', 'aria-label': t('loraEnable'), checked: param.default.on,
+                onChange: (event: { target: { checked: boolean } }) => updateDefault(index, { ...(param.default as Extract<WorkflowParameter['default'], object>), on: event.target.checked }),
+              })),
+              h('label', null, t('loraFile'), param.options !== undefined && param.options.length > 0
+                ? h('select', {
+                    'aria-label': t('loraFile'), className: 'dsc-input', value: param.default.lora,
+                    onChange: (event: { target: { value: string } }) => updateDefault(index, { ...(param.default as Extract<WorkflowParameter['default'], object>), lora: event.target.value }),
+                  }, [...new Set([param.default.lora, ...param.options])].map(option => h('option', { key: String(option), value: String(option) }, String(option))))
+                : h('input', {
+                    'aria-label': t('loraFile'), className: 'dsc-input', value: param.default.lora,
+                    onChange: (event: { target: { value: string } }) => updateDefault(index, { ...(param.default as Extract<WorkflowParameter['default'], object>), lora: event.target.value }),
+                  })),
+              h('label', null, t('loraStrength'), h('input', {
+                type: 'number', step: 'any', 'aria-label': t('loraStrength'), className: 'dsc-input', value: param.default.strength,
+                onChange: (event: { target: { value: string } }) => {
+                  const raw = event.target.value
+                  if (raw.trim() !== '' && Number.isFinite(Number(raw))) updateDefault(index, { ...(param.default as Extract<WorkflowParameter['default'], object>), strength: Number(raw) })
+                },
+              })),
+              h('label', null, t('loraClipStrength'), h('input', {
+                type: 'number', step: 'any', 'aria-label': t('loraClipStrength'), className: 'dsc-input', value: param.default.strengthTwo ?? '', placeholder: t('loraInherit'),
+                onChange: (event: { target: { value: string } }) => {
+                  const raw = event.target.value
+                  if (raw.trim() === '' || Number.isFinite(Number(raw))) updateDefault(index, { ...(param.default as Extract<WorkflowParameter['default'], object>), strengthTwo: raw.trim() === '' ? null : Number(raw) })
+                },
+              })),
+            )
+          : param.upload === 'media'
           ? h('div', {
               className: 'dsc-param-upload-wrap',
               onMouseEnter: () => { hoverRef.current = param.id; setHovered(param.id) },

@@ -657,18 +657,39 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
         timeout_ms: { type: 'number', description: 'Generation wait budget in ms, 5000–3600000 (clamped; default 900000 = 15 min). Video needs minutes; raise this for long videos.' },
         parameters: {
           type: 'object',
-          description: 'Optional per-run values for the workflow\'s adjustable parameters (see the workflow\'s `inputs` note from action: list — e.g. {"prompt": "a red cat", "seed": 42}). Omitted parameters keep their defaults; seed-type parameters randomize when the workflow marks them random.',
+          description: 'Optional per-run values (action: list describes them), e.g. {"prompt":"a red cat","seed":42,"lora_1":{"on":false,"strength":0,"strengthTwo":null}}. LoRA accepts a partial object with only on:boolean, lora:string, strength:finite number, strengthTwo:finite number or null (inherit model strength). Supported fields merge into the authored row; unknown fields are refused. Empty object/string leaves it unchanged; unavailable authored files are preserved until changed explicitly. Omitted parameters use saved defaults; marked seeds randomize.',
         },
       },
       required: ['action'],
     },
     output: {
-      schema: { type: 'object' },
+      schema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string' },
+          workflows: { type: 'array', items: {
+            type: 'object', properties: {
+              id: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' },
+              parameters: { type: 'array', items: { type: 'object', properties: {
+                name: { type: 'string' }, label: { type: 'string' }, type: { type: 'string', enum: ['string', 'number', 'boolean', 'lora'] },
+                default: { oneOf: [
+                  { type: 'string' }, { type: 'number' }, { type: 'boolean' },
+                  { type: 'object', properties: {
+                    on: { type: 'boolean' }, lora: { type: 'string' }, strength: { type: 'number' },
+                    strengthTwo: { oneOf: [{ type: 'number' }, { type: 'null' }] },
+                  }, required: ['on', 'lora', 'strength'], additionalProperties: true },
+                ] },
+                options: { type: 'array', items: { oneOf: [{ type: 'string' }, { type: 'number' }] } },
+              }, required: ['name', 'type', 'default'], additionalProperties: true } },
+            }, required: ['id', 'name', 'description'], additionalProperties: true,
+          } },
+        }, additionalProperties: true,
+      },
       render(_args, value) {
         const data = value as {
           action: string
           env?: { baseUrl: string; comfyuiDirs: string[] }
-          workflows?: Array<{ id: string; name: string; description: string; skill?: { summary: string; files: number; required: boolean }; parameters?: Array<{ name: string; label?: string; type?: string; default?: string | number | boolean; random?: boolean; numberKind?: 'int' | 'float'; options?: Array<string | number>; upload?: 'image' | 'video' | 'audio' | 'media'; subfolder?: string }> }>
+          workflows?: Array<{ id: string; name: string; description: string; skill?: { summary: string; files: number; required: boolean }; parameters?: Array<{ name: string; label?: string; type?: string; default?: WorkflowParameter['default']; random?: boolean; numberKind?: 'int' | 'float'; options?: Array<string | number>; upload?: 'image' | 'video' | 'audio' | 'media'; subfolder?: string }> }>
           comfyuiWorkflows?: Array<{ name: string; extracted: boolean; derived: Array<{ libraryId: string; name: string }> }>
           loadArea?: { slots: number; loaded: number; items: Array<{ name: string; kind: string; source: string }> }
           result?: RunResult
@@ -737,12 +758,13 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
             }
             for (const param of workflow.parameters ?? []) {
               const label = param.label ?? param.name
-              const def = param.default === undefined ? '' : `, default ${typeof param.default === 'string' ? `"${param.default}"` : String(param.default)}`
+              const def = param.default === undefined ? '' : `, default ${JSON.stringify(param.default)}`
               const options = Array.isArray(param.options) && param.options.length > 0 ? `, options: ${param.options.join(' / ')}` : ''
               const upload = param.upload !== undefined
                 ? `, upload type: ${param.upload}${param.upload === 'media' ? `(${param.subfolder ?? ''}/, empty = remove this reference slot)` : ''}`
                 : ''
               lines.push(`  ${param.name}(${label}${param.random === true ? ', random' : ''}${def}${options}${upload})`)
+              if (param.type === 'lora') lines.push('    LoRA partial object: {on?:boolean, lora?:string, strength?:finite number, strengthTwo?:finite number|null}; null inherits model strength. Supported fields merge; empty overrides keep authored values; unknown fields are refused. Choose known files when changing; unchanged authored unavailable files are preserved.')
             }
           }
           const loadArea = data.loadArea

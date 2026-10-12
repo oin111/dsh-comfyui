@@ -216,6 +216,29 @@ await test('apply registers the four tools with an output contract', async () =>
   })
 })
 
+await test('workflow list exposes a host-supported typed LoRA shape and merge guidance', async () => {
+  const seed = async dataDir => {
+    const { ComfyUIStore } = await import(join(root, 'lib', 'store.js'))
+    const { analyzeWorkflowParameters } = await import(join(root, 'lib', 'params.js'))
+    const store = new ComfyUIStore(dataDir, 100)
+    await store.init()
+    const workflow = { '17': { class_type: 'Power Lora Loader (rgthree)', inputs: { lora_1: { on: false, lora: 'synthetic.safetensors', strength: 0, strengthTwo: null } } } }
+    await store.saveWorkflow({ name: 'LoRA synthetic', description: '', workflow, parameters: analyzeWorkflowParameters(workflow) })
+  }
+  await withPlugin({ seed }, async ({ host }) => {
+    const def = host.tools.get('comfyui_workflow')
+    const { assertSupportedJsonSchema, validateJsonSchemaValue } = await import('@deepseek-ai/dsh-tools')
+    assertSupportedJsonSchema(def.output.schema)
+    assert.ok(def.output.schema.properties?.workflows, 'opaque workflow list schema')
+    const value = await def.execute({ action: 'list' }, execFor())
+    assert.deepEqual(validateJsonSchemaValue(def.output.schema, JSON.parse(JSON.stringify(value))), [])
+    const text = def.output.render({ action: 'list' }, value).map(x => x.text).join('\n')
+    assert.match(text, /strengthTwo/)
+    assert.match(text, /partial|частич/)
+    assert.ok(!text.includes('[object Object]'))
+  })
+})
+
 await test('settings: 0.2 path only — configure({auto:false}); legacy installSection is never used', async () => {
   const calls = { configure: [], installSection: 0 }
   const settings = {

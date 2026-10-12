@@ -4,8 +4,8 @@
  *
  * Auto-detection is deliberately conservative: only text prompts, resolution
  * (EmptyLatentImage width/height), sampler steps and seed are recognized.
- * Every other input stays as authored. Users can add custom "advanced"
- * parameters in the panel by picking any node input manually.
+ * rgthree numbered LoRA rows have an explicit object contract. Other objects
+ * stay authored; advanced creation offers primitives and supported LoRA rows.
  */
 import { randomUUID } from 'node:crypto'
 
@@ -16,13 +16,13 @@ export interface WorkflowParameter {
   name: string
   /** Short display label (localized by the UI). */
   label: string
-  type: 'string' | 'number' | 'boolean'
+  type: 'string' | 'number' | 'boolean' | 'lora'
   /** Node id in the API workflow the value is written back to. */
   nodeId: string
   /** Input key on that node. */
   inputKey: string
   /** Value used when the caller omits it; also the "as authored" value. */
-  default: string | number | boolean
+  default: string | number | boolean | LoraValue
   /** Note shown to the agent alongside the parameter. */
   description?: string
   /** Number parameters (seeds): randomize on every run when true. */
@@ -50,6 +50,8 @@ export interface WorkflowParameter {
 }
 
 type Workflow = Record<string, { class_type: string; inputs: Record<string, unknown> }>
+export { isLoraInput, isLoraValue } from './lora.js'
+import { isLoraInput, isLoraValue, type LoraValue } from './lora.js'
 export type { Workflow }
 
 /** Node classes whose text inputs are treated as prompts. */
@@ -194,6 +196,13 @@ export function inputOptions(
   inputKey: string,
 ): Array<string | number> | undefined {
   if (objectInfo === undefined) return undefined
+  if (isLoraInput(classType, inputKey)) {
+    for (const loader of ['LoraLoader', 'LoraLoaderModelOnly', 'LoraLoaderBypass', 'LoraLoaderBypassModelOnly']) {
+      const options = inputOptions(objectInfo, loader, 'lora_name')?.filter((value): value is string => typeof value === 'string')
+      if (options !== undefined && options.length > 0) return options
+    }
+    return undefined
+  }
   const def = objectInfo[classType] as { input?: { required?: Record<string, unknown>; optional?: Record<string, unknown> } } | undefined
   const spec = def?.input?.required?.[inputKey] ?? def?.input?.optional?.[inputKey]
   if (!Array.isArray(spec)) return undefined
@@ -368,10 +377,10 @@ export function analyzeWorkflowParameters(workflow: Workflow, objectInfo?: Recor
   const add = (input: {
     name: string
     label: string
-    type: 'string' | 'number' | 'boolean'
+    type: WorkflowParameter['type']
     nodeId: string
     inputKey: string
-    value: string | number | boolean
+    value: WorkflowParameter['default']
     random?: boolean
     classType?: string
     options?: Array<string | number>
@@ -420,6 +429,10 @@ export function analyzeWorkflowParameters(workflow: Workflow, objectInfo?: Recor
     if (typeof classType !== 'string' || inputs === undefined || typeof inputs !== 'object' || inputs === null) continue
 
     for (const [key, raw] of Object.entries(inputs)) {
+      if (isLoraInput(classType, key) && isLoraValue(raw)) {
+        add({ name: key, label: `LoRA · ${key}`, type: 'lora', nodeId: id, inputKey: key, value: structuredClone(raw), classType })
+        continue
+      }
       if (!isPrimitive(raw)) continue // links are [nodeId, index] arrays
       if (TEXT_CLASSES.has(classType) && TEXT_KEYS.has(key)) {
         if (consumed.has(id) && take('prompt', 2)) add({ name: 'prompt', label: displayName(workflow, id, key), type: 'string', nodeId: id, inputKey: key, value: raw, classType })
@@ -533,6 +546,13 @@ export function refreshParameterMetadata(
   const refreshed = parameters.map((param) => {
     const node = workflow[param.nodeId]
     if (node === undefined) return param
+    if (param.type === 'lora' && isLoraInput(node.class_type, param.inputKey)) {
+      const options = inputOptions(objectInfo, node.class_type, param.inputKey)
+      if (options === undefined) return param
+      const next = { ...param, options }
+      if (!sameDerivedFields(param, next)) changed.push(param.name)
+      return next
+    }
     if (inputSpec(objectInfo, node.class_type, param.inputKey) === undefined) return param
     const next: WorkflowParameter = { ...param }
     next.options = inputOptions(objectInfo, node.class_type, param.inputKey)
@@ -641,6 +661,28 @@ export function applyWorkflowParameters(
     } else {
       value = param.default
     }
+    if (param.type === 'lora') {
+      const authored = node.inputs[param.inputKey]
+      if (!isLoraInput(node.class_type, param.inputKey) || !isLoraValue(authored)) throw new Error(`Invalid LoRA parameter target: ${param.name}`)
+      if (value === '' || value === undefined) continue
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`Invalid LoRA value: ${param.name}`)
+      const patch = value as Record<string, unknown>
+      if (Object.getPrototypeOf(patch) !== Object.prototype && Object.getPrototypeOf(patch) !== null) throw new Error(`Unsafe LoRA object: ${param.name}`)
+      if (Object.getOwnPropertySymbols(patch).length > 0) throw new Error(`Unsafe LoRA fields: ${param.name}`)
+      for (const key of Object.keys(patch)) {
+        if (['__proto__', 'constructor', 'prototype'].includes(key) || patch[key] === undefined) throw new Error(`Unsafe LoRA field: ${key}`)
+      }
+      const supported = new Set(['on', 'lora', 'strength', 'strengthTwo'])
+      for (const key of Object.keys(patch)) {
+        if (!supported.has(key) && (explicit || JSON.stringify(patch[key]) !== JSON.stringify(authored[key]))) throw new Error(`Unsupported LoRA field: ${key}`)
+      }
+      const merged = { ...authored, ...patch }
+      if (!isLoraValue(merged)) throw new Error(`Invalid LoRA value: ${param.name}`)
+      const options = inputOptions(objectInfo, node.class_type, param.inputKey) ?? param.options
+      if (merged.lora !== authored.lora && options !== undefined && !options.includes(merged.lora)) throw new Error(`Unknown LoRA file: ${merged.lora}`)
+      node.inputs[param.inputKey] = merged
+      continue
+    }
     // A loader parameter with an empty default and nothing to fill it (no
     // explicit value, no load-area slot of its kind) leaves the workflow's
     // authored file name alone. Writing the empty default instead would clear
@@ -654,6 +696,7 @@ export function applyWorkflowParameters(
     // sever the link on every run, so an omitted value leaves the link alone —
     // only an explicit value replaces it.
     if (!explicit && param.default === '' && !isPrimitive(node.inputs[param.inputKey]) && node.inputs[param.inputKey] !== undefined) continue
+    if (typeof node.inputs[param.inputKey] === 'object' && node.inputs[param.inputKey] !== null && !Array.isArray(node.inputs[param.inputKey])) throw new Error(`Cannot replace object input with scalar parameter: ${param.name}; recognize parameters again`)
     // INT inputs reject decimals at queue time; round rather than fail on a
     // value like 20.5. The stored kind wins, but a workflow saved before the
     // kind was recorded still gets it resolved from object_info here, so old

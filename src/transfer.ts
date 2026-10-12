@@ -20,7 +20,7 @@
 import { createRequire } from 'node:module'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import type { Unzipped, Zippable } from 'fflate'
-import type { WorkflowParameter } from './params.js'
+import { isLoraValue, type WorkflowParameter } from './params.js'
 import { validateWorkflow, type StoredWorkflow } from './store.js'
 import { parseSkillPath, sizeLimitOf, SKILL_MAIN, type SkillPackResult, type WorkflowSkillPack } from './skillpack.js'
 
@@ -389,10 +389,10 @@ function sanitizeParameters(value: unknown): WorkflowParameter[] {
     const valid =
       typeof raw.id === 'string' && raw.id !== '' &&
       typeof raw.name === 'string' && raw.name !== '' &&
-      (raw.type === 'string' || raw.type === 'number' || raw.type === 'boolean') &&
+      (raw.type === 'string' || raw.type === 'number' || raw.type === 'boolean' || raw.type === 'lora') &&
       typeof raw.nodeId === 'string' && raw.nodeId !== '' &&
       typeof raw.inputKey === 'string' && raw.inputKey !== '' &&
-      (typeof raw.default === 'string' || typeof raw.default === 'number' || typeof raw.default === 'boolean')
+      (raw.type === 'lora' ? isLoraValue(raw.default) : (typeof raw.default === 'string' || typeof raw.default === 'number' || typeof raw.default === 'boolean'))
     if (valid) out.push(item as WorkflowParameter)
   }
   return out

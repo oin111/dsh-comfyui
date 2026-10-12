@@ -1,5 +1,10 @@
 /** Russian/English UI dictionaries; independent of host locale. */
 export const ru = {
+  "loraEnable": "Включить LoRA",
+  "loraFile": "Файл LoRA",
+  "loraStrength": "Сила модели",
+  "loraClipStrength": "Сила CLIP (необязательно)",
+  "loraInherit": "Как у модели (null)",
   "tag_image-to-image": "Изображение → изображение",
   "tag_text-to-image": "Текст → изображение",
   "tag_text-to-video": "Текст → видео",
@@ -273,6 +278,11 @@ export const ru = {
 }
 
 export const en = {
+  "loraEnable": "Enable LoRA",
+  "loraFile": "LoRA file",
+  "loraStrength": "Model strength",
+  "loraClipStrength": "CLIP strength (optional)",
+  "loraInherit": "Inherit model strength (null)",
   "tag_image-to-image": "image-to-image",
   "tag_text-to-image": "text-to-image",
   "tag_text-to-video": "text-to-video",

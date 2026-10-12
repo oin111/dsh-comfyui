@@ -18,7 +18,7 @@
 > | **@oin111/dsh-comfyui 0.6.x** | **0.2.0-rc.2 – 0.2.x** (incl. 0.2.1 alphas) | Background jobs follow the 0.2 contract (owner = SessionId, outcome in `result`); cancel only touches this plugin's prompt; works in PTC mode |
 > | upstream dsh-comfyui 0.5.x | 0.1.2 – 0.1.7 | Use upstream on older hosts |
 >
-> Install: `dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.2.tgz`
+> Install: `dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.3.tgz`
 
 ## Backend safety and transfer limits
 
@@ -29,7 +29,7 @@
 - Cancellation aborts an in-flight history fetch. Even if history fails concurrently, the plugin awaits a targeted `cancelPrompt` attempt before reporting killed/interrupted or removing tracking. Cleanup is best-effort: an unreachable backend may continue work. Only a queue-confirmed matching running prompt is interrupted; unrelated prompts are not intentionally stopped.
 - Media origins use only an admitted request's Host and the host server's protocol, never Referer. The fallback is the concrete bind address; LAN detection is used only for wildcard binds. Asset deletion attempts file removal only under an explicitly configured absolute, accessible `outputDir`; otherwise it removes only the index record.
 
-Version **0.6.2** is a local-only named-widget extraction fix, not yet published. Run `npm pack` before the local install commands below. UI defaults to Russian; English preferences are preserved and old `zh` preferences migrate to Russian. Agent tool descriptions and the companion skill use English, with Russian as the default response language.
+Version **0.6.3** is a local-only LoRA parameter/editor fix, not yet published. Run `npm pack` before the local install commands below. UI defaults to Russian; English preferences are preserved and old `zh` preferences migrate to Russian. Agent tool descriptions and the companion skill use English, with Russian as the default response language.
 
 ## Features
 
@@ -52,6 +52,12 @@ A right-docked panel with three tabs:
 
 Clicking the "ComfyUI Panel" button in the session header probes the backend's connection to ComfyUI: when it cannot connect, the panel closes again (the button does not stay highlighted) and a toast at the top of the page explains why (with the concrete reason), asking you to start the local ComfyUI (so the backend can see its port) or check the remote server URL in settings; a healthy connection stays silent, with a brief "Connected" note only when it recovers from a failure.
 
+
+### LoRA parameters (0.6.3)
+
+Only the exact `Power Lora Loader (rgthree)` class and numbered `lora_N` inputs expose object parameters with `type: lora`. The editor offers enable, file, model strength, and optional CLIP strength; blank CLIP strength means `null` (inherit model strength). File choices come from `LoraLoader`, then `LoraLoaderModelOnly`, `LoraLoaderBypass`, `LoraLoaderBypassModelOnly`. An unavailable authored file is preserved until explicitly changed. `refresh` updates choices while retaining type and values. Save/edit and preset export/import preserve objects.
+
+Agents can pass partial overrides such as `{"lora_1":{"on":false,"strength":0,"strengthTwo":null}}`. Only `on` (boolean), `lora` (string), `strength` (finite number), and `strengthTwo` (finite number or null) are accepted. These merge into the authored row, preserving unknown authored fields. Empty objects/strings leave it unchanged; omitted parameters use saved defaults. Malformed, unknown and unsafe fields are refused; old scalar parameters cannot overwrite objects. Advanced creation supports primitives and these LoRA rows, not arbitrary objects. Restart DSH after upgrading and recognize parameters again for an already extracted workflow; if an old converter lost the rows, re-extract the original graph.
 
 ### Named widget extraction (0.6.2)
 
@@ -89,9 +95,9 @@ The DH settings page gets a "ComfyUI" section: server address, API key env var n
 
 ```sh
 # web profile
-dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.2.tgz
+dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.3.tgz
 # desktop profile
-dsh plugin --profile desktop add ./oin111-dsh-comfyui-0.6.2.tgz
+dsh plugin --profile desktop add ./oin111-dsh-comfyui-0.6.3.tgz
 ```
 
 After restarting the app: a panel entry appears in the sidebar, a "ComfyUI" section in settings, and the agent gets all tools plus the companion skill right away.
