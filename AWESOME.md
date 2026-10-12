@@ -1,6 +1,6 @@
 # Marketplace listing material
 
-Preparation notes for awesome-dsh-plugin and its downstream dshmarket listing. Publishing, pushing a repository, creating a release or submitting a listing requires explicit user approval. Version 0.6.1 is a local localization update, not yet published.
+Preparation notes for awesome-dsh-plugin and its downstream dshmarket listing. Publishing, pushing a repository, creating a release or submitting a listing requires explicit user approval. Version 0.6.2 is a local named-widget extraction fix, not yet published.
 
 ## Suggested English entry
 
@@ -26,6 +26,6 @@ Preparation notes for awesome-dsh-plugin and its downstream dshmarket listing. P
 Local install after npm pack:
 
 ```sh
-dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.1.tgz
-dsh plugin --profile desktop add ./oin111-dsh-comfyui-0.6.1.tgz
+dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.2.tgz
+dsh plugin --profile desktop add ./oin111-dsh-comfyui-0.6.2.tgz
 ```

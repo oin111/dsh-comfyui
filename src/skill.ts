@@ -63,7 +63,8 @@ A voice needs BOTH an audio file (.wav/.mp3/.flac/.ogg/.m4a/.aac) and nonempty m
 ## Graph-to-API technical rules
 
 - Node references must use strings: \`[String(nodeId), outputSlot]\`; numeric references cause server dictionary KeyError.
-- Widget order follows the graph node's own inputs array, entries with widget.name, NOT object_info order. Dynamic children (e.g. sampling_mode.temperature) and linked widgets still occupy widgets_values positions. object_info supplies INT control_after_generate metadata.
+- A valid widgets_values_named map is authoritative: map API/widget names explicitly, let links win, omit UI-only entries; do not guess missing keys from positional values. Power Lora Loader (rgthree) also accepts numbered lora_* objects with exact on/off and strengths. Malformed containers use legacy conversion; malformed named LoRA values are errors.
+- Without a valid named map, widget order follows the graph node's own inputs array, entries with widget.name, NOT object_info order. Dynamic children (e.g. sampling_mode.temperature) and linked widgets still occupy widgets_values positions. object_info supplies INT control_after_generate metadata.
 - The UI's control_after_generate dropdown after seed/noise_seed INT (or explicit declaration) occupies a widget slot but has no API input. Consume without writing, otherwise subsequent widgets shift (e.g. seed followed by "fixed" in TTS).
 - Object-shaped widgets_values (e.g. VHS_VideoCombine) use names; skip hidden internal state such as videopreview.
 - Reroute and bypass mode 4 pass through the first linked input.

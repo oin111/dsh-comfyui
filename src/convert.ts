@@ -2,8 +2,9 @@
  * Convert a ComfyUI UI-graph workflow (the format the ComfyUI frontend saves
  * to the server via /api/userdata) into the API format accepted by POST
  * /prompt. Modeled on the frontend's convertToApiFormat: input links become
- * [nodeId, slot] references, widgets_values are zipped onto input names in
- * object_info order (control_after_generate is the extra seed widget), and
+ * [nodeId, slot] references, named widgets map explicitly to API inputs;
+ * legacy widgets_values use graph widget order with object_info fallback
+ * (control_after_generate is the extra seed widget), and
  * Reroute / bypassed (mode 4) nodes are skipped with their links rewired.
  * Nodes the conversion cannot represent fail loudly with the offending type.
  */
@@ -24,6 +25,7 @@ interface GraphNode {
   inputs?: Array<{ name: string; link: number | null; widget?: { name?: string } }>
   outputs?: Array<{ links: Array<number | null> }>
   widgets_values?: unknown
+  widgets_values_named?: Record<string, unknown>
 }
 
 /** Node types that exist only in the UI and carry no data flow. */
@@ -31,6 +33,16 @@ const UI_ONLY = new Set(['Note', 'StickyNote', 'Reroute', 'Fast Groups Bypasser 
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Never assign prototype-mutating/reserved names to plain API dictionaries. */
+function safeInputName(name: string): boolean {
+  return name !== '__proto__' && name !== 'constructor' && name !== 'prototype'
+}
+
+function uiOnlyWidgetName(name: string): boolean {
+  return name === 'control_after_generate' || /^divider(?:#\d+)?$/.test(name)
+    || name === 'PowerLoraLoaderHeaderWidget' || name === '➕ Add Lora'
 }
 
 function isWidgetSpec(typeSpec: unknown, options: Record<string, unknown> | undefined): boolean {
@@ -51,7 +63,7 @@ function inputSpec(
   if (input === undefined) return undefined
   for (const group of ['required', 'optional'] as const) {
     const fields = isObject(input[group]) ? input[group] : {}
-    if (name in fields) return fields[name]
+    if (Object.hasOwn(fields, name)) return fields[name]
   }
   return undefined
 }
@@ -302,6 +314,7 @@ export function convertGraphToApi(
       widgets_values: Array.isArray(raw.widgets_values) || isObject(raw.widgets_values)
         ? raw.widgets_values
         : undefined,
+      widgets_values_named: isObject(raw.widgets_values_named) ? raw.widgets_values_named : undefined,
     }
   })
 
@@ -342,6 +355,7 @@ export function convertGraphToApi(
 
     const inputs: Record<string, unknown> = {}
     for (const entry of node.inputs ?? []) {
+      if (!safeInputName(entry.name)) continue
       if (entry.link === undefined || entry.link === null) continue
       const resolved = resolveOutput(entry.link, links, nodesById, objectInfo, warnings, dropReasons)
       if (resolved !== 'missing') {
@@ -359,14 +373,35 @@ export function convertGraphToApi(
       }
     }
     const values = node.widgets_values
-    if (Array.isArray(values)) {
+    if (node.widgets_values_named !== undefined) {
+      // A named map is authoritative, including an incomplete/empty one. Its
+      // UI entries destroy positional alignment; never zip its keys with the
+      // legacy array or fill missing keys from that potentially divergent array.
+      const widgetNames = new Set(widgetNamesFor(node.type, objectInfo, node))
+      const linkedNames = new Set((node.inputs ?? []).filter((entry) => entry.link != null)
+        .flatMap((entry) => [entry.name, entry.widget?.name].filter((name): name is string => typeof name === 'string')))
+      for (const [name, value] of Object.entries(node.widgets_values_named)) {
+        if (!safeInputName(name) || uiOnlyWidgetName(name) || linkedNames.has(name) || Object.hasOwn(inputs, name)) continue
+        const declared = inputSpec(objectInfo, node.type, name) !== undefined
+        const dynamicLora = node.type === 'Power Lora Loader (rgthree)' && /^lora_\d+$/.test(name)
+        if (dynamicLora && (!isObject(value)
+          || !['on', 'lora', 'strength'].every((key) => Object.hasOwn(value, key))
+          || typeof value.on !== 'boolean' || typeof value.lora !== 'string'
+          || typeof value.strength !== 'number' || !Number.isFinite(value.strength)
+          || (Object.hasOwn(value, 'strengthTwo') && value.strengthTwo !== null
+            && (typeof value.strengthTwo !== 'number' || !Number.isFinite(value.strengthTwo))))) {
+          return { ok: false, error: `Узел ${node.type} (id ${node.id}), вход ${name}: некорректное значение LoRA` }
+        }
+        if (value !== undefined && (declared || widgetNames.has(name) || dynamicLora)) inputs[name] = value
+      }
+    } else if (Array.isArray(values)) {
       let valueIndex = 0
       for (const name of widgetNamesFor(node.type, objectInfo, node)) {
         if (valueIndex >= values.length) break
         // control_after_generate is a frontend-only seed dropdown whose value
         // still occupies a widgets_values slot; it has no API input, so
         // consume (advance the index) but never emit it into the workflow.
-        if (name === 'control_after_generate') {
+        if (!safeInputName(name) || name === 'control_after_generate') {
           valueIndex++
           continue
         }
@@ -377,6 +412,7 @@ export function convertGraphToApi(
       // Some nodes (e.g. VHS_VideoCombine) serialize widgets as a keyed object
       // including internal UI state; copy the plain input values by name.
       for (const [name, value] of Object.entries(values)) {
+        if (!safeInputName(name)) continue
         if (name === 'videopreview') continue
         if (isObject(value) && value.hidden === true) continue
         if (!(name in inputs)) inputs[name] = value
