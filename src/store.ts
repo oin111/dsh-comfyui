@@ -5,7 +5,7 @@
  * ephemeral, so the asset index is the plugin's memory of what it generated.
  */
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, open, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { WorkflowParameter } from './params.js'
 
@@ -100,16 +100,75 @@ async function readJsonFile<T>(path: string, fallback: T): Promise<T> {
   }
 }
 
+/** Destructive operations must reject the whole snapshot, never skip poison
+ * entries and erase the remaining recoverable records. */
+function isAssetRecord(value: unknown): value is AssetRecord {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return typeof record.promptId === 'string'
+    && typeof record.ts === 'string'
+    && (record.workflowName === null || typeof record.workflowName === 'string')
+    && typeof record.source === 'string'
+    && Array.isArray(record.media)
+    && record.media.every((value: unknown) => {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+      const ref = value as Record<string, unknown>
+      return ['filename', 'subfolder', 'type', 'node', 'url'].every(key => typeof ref[key] === 'string')
+        && Number.isSafeInteger(ref.index) && (ref.index as number) >= 0
+        && ['image', 'video', 'audio', 'other'].includes(ref.kind as string)
+    })
+}
+
 /** Persistent queue-tracker memory (survives web-server restarts). */
 export interface TrackedState {
   runs: Array<{ promptId: string; ts: string; workflowName: string | null; source: string }>
   archived: string[]
 }
 
+/** Shared by instances of this module, not by independent processes/module
+ * copies. The data directory and its ancestry must remain trusted/stable. */
+const assetMutations = new Map<string, Promise<void>>()
+
 /** JSON-file-backed store for workflows and assets. */
 export class ComfyUIStore {
   private readonly workflowsPath: string
   private readonly assetsPath: string
+  private assetMutation: Promise<unknown> = Promise.resolve()
+
+  private mutateAssets<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.assetMutation.then(async () => {
+      const key = join(await realpath(dirname(this.assetsPath)), 'assets.json')
+      const result = (assetMutations.get(key) ?? Promise.resolve()).then(operation)
+      const settled = result.then(() => {}, () => {})
+      assetMutations.set(key, settled)
+      try {
+        return await result
+      } finally {
+        if (assetMutations.get(key) === settled) assetMutations.delete(key)
+      }
+    })
+    this.assetMutation = next.catch(() => {})
+    return next
+  }
+
+  private async writeAssets(list: AssetRecord[]): Promise<void> {
+    const temporary = `${this.assetsPath}.${randomUUID()}.tmp`
+    // Exclusive creation refuses existing files/symlinks. Do not clean up a
+    // path unless this operation successfully created it.
+    const handle = await open(temporary, 'wx', 0o600)
+    let published = false
+    try {
+      try {
+        await handle.writeFile(JSON.stringify(list, null, 2) + NEWLINE, 'utf8')
+      } finally {
+        await handle.close()
+      }
+      await rename(temporary, this.assetsPath)
+      published = true
+    } finally {
+      if (!published) await unlink(temporary)
+    }
+  }
   private readonly trackedPath: string
   private readonly mediaSizesPath: string
   private readonly mediaHashesPath: string
@@ -312,20 +371,43 @@ export class ComfyUIStore {
   /** Drop one asset record from the index; returns the record that was
    * removed so the caller can delete the files it referenced. */
   async deleteAsset(promptId: string): Promise<AssetRecord | undefined> {
-    const list = await this.listAssets()
-    const index = list.findIndex((record) => record.promptId === promptId)
-    if (index === -1) return undefined
-    const [removed] = list.splice(index, 1)
-    await writeFile(this.assetsPath, JSON.stringify(list, null, 2) + NEWLINE, 'utf8')
-    return removed
+    return this.mutateAssets(async () => {
+      const list = await this.listAssets()
+      const index = list.findIndex((record) => record.promptId === promptId)
+      if (index === -1) return undefined
+      const [removed] = list.splice(index, 1)
+      await this.writeAssets(list)
+      return removed
+    })
+  }
+
+  /** Remove the complete index in one serialized mutation; later appends survive. */
+  async clearAssets(): Promise<AssetRecord[]> {
+    return this.mutateAssets(async () => {
+      let removed: AssetRecord[]
+      try {
+        const parsed: unknown = JSON.parse(await readFile(this.assetsPath, 'utf8'))
+        if (!Array.isArray(parsed) || !parsed.every(isAssetRecord)) {
+          throw new Error('invalid asset index snapshot')
+        }
+        removed = parsed
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'ENOENT') throw error
+        removed = []
+      }
+      await this.writeAssets([])
+      return removed
+    })
   }
 
   async appendAsset(record: AssetRecord): Promise<void> {
-    const list = await this.listAssets()
-    if (list.some((entry) => entry.promptId === record.promptId)) return
-    list.unshift(record)
-    if (list.length > this.maxAssets) list.length = this.maxAssets
-    await writeFile(this.assetsPath, `${JSON.stringify(list, null, 2)}\n`, 'utf8')
+    return this.mutateAssets(async () => {
+      const list = await this.listAssets()
+      if (list.some((entry) => entry.promptId === record.promptId)) return
+      list.unshift(record)
+      if (list.length > this.maxAssets) list.length = this.maxAssets
+      await this.writeAssets(list)
+    })
   }
 
   /** Load the persisted queue-tracker state (empty when absent/corrupt). */

@@ -14,7 +14,7 @@ import { collectMedia, historyErrorMessage, mediaProxyUrl, type ComfyUIMediaRef 
 import type { AssetRecord } from './store.js'
 import { MAX_ASSET_BYTES, SKILL_MAIN, SKILL_PRESET_DIRS, joinFrontmatter, splitFrontmatter } from './skillpack.js'
 import { MAX_IMPORT_BYTES, analyzeImportPackage, applyImportPackage, buildExportPackage } from './transfer.js'
-import { unlink } from 'node:fs/promises'
+import { realpath, unlink } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
@@ -78,6 +78,15 @@ async function deleteOutputFile(outputDir: string, ref: { filename: string; subf
   const rel = relative(outputDir, target)
   if (rel === '' || rel.startsWith('..') || isAbsolute(rel) || rel.split(sep).includes('..')) return 'skipped'
   try {
+    // Resolve the parent, not the leaf: unlinking a symlink itself is safe,
+    // but traversing a symlinked directory could delete outside outputDir.
+    // This precheck is NOT race-proof: outputDir, its ancestry and traversed
+    // parents must not be replaceable by untrusted actors during deletion.
+    // Portable Node unlink has no directory-fd-relative unlinkat equivalent.
+    const root = await realpath(outputDir)
+    const parent = await realpath(resolve(target, '..'))
+    const parentRel = relative(root, parent)
+    if (parentRel.startsWith('..') || isAbsolute(parentRel)) return 'skipped'
     await unlink(target)
     return 'deleted'
   } catch (error) {
@@ -1270,6 +1279,43 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
       // panel sees results as soon as the next poll lands.
       await runtime.sweep()
       sendJson(response, 200, { ok: true, assets: healAssetUrls(await runtime.listAssets()) })
+    }),
+  }))
+
+  disposers.push(webServer.register({
+    kind: 'exact',
+    path: '/comfyui/assets/clear',
+    handler: withHint(async (request, response) => {
+      if (!methodIs(request, 'POST')) {
+        sendJson(response, 405, { error: 'method not allowed' })
+        return
+      }
+      if (await readSameOriginPost(request, response) === undefined) return
+      try {
+        const outputDir = resolveOutputDir(runtime.getConfig().outputDir, [])
+        const removed = await runtime.clearAssets()
+        let deleted = 0
+        let missing = 0
+        let skipped = 0
+        let files = 0
+        const failures: string[] = []
+        for (const record of removed) {
+          for (const item of record.media) {
+            files += 1
+            try {
+              const result = outputDir === undefined ? 'skipped' : await deleteOutputFile(outputDir, item)
+              if (result === 'deleted') deleted += 1
+              else if (result === 'missing') missing += 1
+              else skipped += 1
+            } catch (error) {
+              failures.push(`${item.filename}: ${errorMessage(error)}`)
+            }
+          }
+        }
+        sendJson(response, 200, { ok: true, removed: removed.length, files, deleted, missing, skipped, failures, outputDir: outputDir ?? null })
+      } catch (error) {
+        sendJson(response, 500, { error: errorMessage(error) })
+      }
     }),
   }))
 

@@ -95,6 +95,8 @@ export interface ComfyUIRuntime {
   listAssets(): Promise<AssetRecord[]>
   /** Remove one asset record from the index, returning what was removed. */
   deleteAsset(promptId: string): Promise<AssetRecord | undefined>
+  /** Remove all indexed assets, returning the exact removed snapshot. */
+  clearAssets(): Promise<AssetRecord[]>
   /** Move completed tracked runs into the asset index. */
   sweep(): Promise<AssetRecord[]>
   /** Workflows the user saved on the ComfyUI server, with extract status. */

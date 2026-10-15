@@ -3149,6 +3149,8 @@ function AssetsTab({ t, onPreview }: { t: ComfyUIPanelProps['t']; onPreview: (im
   const [filter, setFilter] = useState(() => panelStore.getAssetFilter())
   /** Asset awaiting the delete confirmation, if any. */
   const [pendingDelete, setPendingDelete] = useState<AssetEntry | null>(null)
+  const [pendingClear, setPendingClear] = useState(false)
+  const deleteBusy = useRef(false)
   const [deleting, setDeleting] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -3173,8 +3175,33 @@ function AssetsTab({ t, onPreview }: { t: ComfyUIPanelProps['t']; onPreview: (im
     }
   }, [])
 
+  const confirmClear = async (): Promise<void> => {
+    if (deleteBusy.current) return
+    deleteBusy.current = true
+    setDeleting(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const result = await postJson('/comfyui/assets/clear', {}) as {
+        ok?: boolean; error?: string; removed?: number; deleted?: number; missing?: number; skipped?: number; failures?: string[]
+      }
+      if (result.ok !== true) throw new Error(result.error ?? 'clear failed')
+      await load()
+      setNotice(t('assetClearDone', { removed: result.removed ?? 0, deleted: result.deleted ?? 0, missing: result.missing ?? 0, skipped: result.skipped ?? 0 }))
+      if (result.failures?.length) setError(t('assetDeleteFailed', { message: result.failures.join('; ') }))
+    } catch (cause) {
+      setError(t('assetDeleteFailed', { message: cause instanceof Error ? cause.message : String(cause) }))
+    } finally {
+      setPendingClear(false)
+      setDeleting(false)
+      deleteBusy.current = false
+    }
+  }
+
   /** Delete the record and (when the output directory is known) its files. */
   const confirmDelete = async (asset: AssetEntry): Promise<void> => {
+    if (deleteBusy.current) return
+    deleteBusy.current = true
     setDeleting(true)
     try {
       const result = (await postJson('/comfyui/assets/delete', { promptId: asset.promptId })) as
@@ -3191,6 +3218,7 @@ function AssetsTab({ t, onPreview }: { t: ComfyUIPanelProps['t']; onPreview: (im
       setPendingDelete(null)
     } finally {
       setDeleting(false)
+      deleteBusy.current = false
     }
   }
 
@@ -3214,7 +3242,8 @@ function AssetsTab({ t, onPreview }: { t: ComfyUIPanelProps['t']; onPreview: (im
         h('option', { value: '' }, t('assetAll')),
         names.map((name) => h('option', { key: name, value: name }, name === '' ? '—' : name)),
       ),
-      h('button', { className: 'dsc-btn', onClick: () => void load() }, t('refresh')),
+      h('button', { className: 'dsc-btn', disabled: deleting, onClick: () => void load() }, t('refresh')),
+      h('button', { className: 'dsc-btn dsc-btn--danger', disabled: deleting || assets.length === 0, onClick: () => { setNotice(null); setPendingClear(true) } }, t('assetClearAll')),
     ),
     error !== null ? h(ErrorNote, { t, message: error }) : null,
     notice !== null ? h('div', { className: 'dsc-ok' }, notice) : null,
@@ -3225,8 +3254,15 @@ function AssetsTab({ t, onPreview }: { t: ComfyUIPanelProps['t']; onPreview: (im
           asset,
           t,
           onClick: () => openAsset(asset),
-          onDelete: () => { setNotice(null); setPendingDelete(asset) },
+          onDelete: () => { if (!deleteBusy.current) { setNotice(null); setPendingDelete(asset) } },
         }))),
+    pendingClear
+      ? h(ConfirmDialog, {
+          t, title: t('assetClearTitle'), body: t('assetClearBody'), busy: deleting,
+          onConfirm: () => { void confirmClear() },
+          onCancel: () => { if (!deleteBusy.current) setPendingClear(false) },
+        })
+      : null,
     pendingDelete !== null
       ? h(ConfirmDialog, {
           t,
@@ -3251,7 +3287,7 @@ function ConfirmDialog(props: {
   onConfirm: () => void
   onCancel: () => void
 }): ReturnType<typeof h> {
-  return h('div', { className: 'dsc-picker-overlay', onClick: props.onCancel },
+  return h('div', { className: 'dsc-picker-overlay', onClick: () => { if (!props.busy) props.onCancel() } },
     h('div', { className: 'dsc-confirm', onClick: (event: { stopPropagation: () => void }) => event.stopPropagation() },
       h('div', { className: 'dsc-confirm-title' }, props.title),
       h('div', { className: 'dsc-confirm-body' }, props.body),

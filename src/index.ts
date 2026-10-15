@@ -263,6 +263,7 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
     saveSlots: (slots) => store.saveSlots(slots),
     listAssets: () => store.listAssets(),
     deleteAsset: (promptId) => store.deleteAsset(promptId),
+    clearAssets: () => store.clearAssets(),
     sweep: async () => {
       const client = runtime.createClient(await resolveApiKey(ctx, resolved.apiKeyEnv))
       return tracker.sweep({ client, store, maxItems: resolved.maxMediaItems, proxyBase: runtime.proxyBase() })
