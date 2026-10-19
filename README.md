@@ -18,7 +18,7 @@
 > | **@oin111/dsh-comfyui 0.6.x** | **0.2.0-rc.2 – 0.2.x** (включая 0.2.1 alpha) | Фоновые задачи по контракту 0.2 (owner = SessionId, результат в `result`); отмена затрагивает только prompt этого плагина; режим PTC работает |
 > | upstream dsh-comfyui 0.5.x | 0.1.2 – 0.1.7 | Для старых версий хоста используйте upstream |
 >
-> Установка: `dsh plugin --profile web add "$HOME/Downloads/oin111-dsh-comfyui-0.6.8.tgz"`
+> Установка: `dsh plugin --profile web add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.8/oin111-dsh-comfyui-0.6.8.tgz`
 
 ## Безопасность бэкенда и пределы передачи
 
@@ -29,7 +29,7 @@
 - Отмена прерывает текущий запрос history. Даже при одновременной ошибке history плагин ждёт попытки адресного `cancelPrompt` до статуса killed/interrupted и удаления отслеживания. Очистка best-effort: недоступный бэкенд может продолжить работу. Прерывается лишь prompt, который очередь подтверждает как текущий; чужие задачи намеренно не останавливаются.
 - Origin медиа берётся только из Host разрешённого запроса и протокола сервера, не из Referer. Резервный адрес — конкретный bind; поиск LAN применяется только при wildcard-bind. Файл ассета удаляется лишь при явно заданном абсолютном, доступном `outputDir`; иначе удаляется только запись индекса.
 
-Версия **0.6.8** опубликована в [GitHub Releases](https://github.com/oin111/dsh-comfyui/releases/tag/v0.6.8); в npm не публиковалась. Перед установкой из файла ниже скачайте архив из релиза или выполните `npm pack` в каталоге исходников. Интерфейс по умолчанию русский; выбор английского сохраняется, прежний `zh` заменяется на русский. Описания инструментов и сопутствующий навык — на английском, с указанием отвечать пользователю по-русски по умолчанию.
+Версия **0.6.8** опубликована в [GitHub Releases](https://github.com/oin111/dsh-comfyui/releases/tag/v0.6.8); в npm не публиковалась. Команды ниже устанавливают архив напрямую по HTTPS-ссылке релиза; предварительное скачивание не требуется. Интерфейс по умолчанию русский; выбор английского сохраняется, прежний `zh` заменяется на русский. Описания инструментов и сопутствующий навык — на английском, с указанием отвечать пользователю по-русски по умолчанию.
 
 ## Возможности
 
@@ -98,12 +98,10 @@
 ## Установка
 
 ```sh
-mkdir -p "$HOME/Downloads"
-curl -fL "https://github.com/oin111/dsh-comfyui/releases/download/v0.6.8/oin111-dsh-comfyui-0.6.8.tgz" -o "$HOME/Downloads/oin111-dsh-comfyui-0.6.8.tgz"
 # профиль web
-dsh plugin --profile web add "$HOME/Downloads/oin111-dsh-comfyui-0.6.8.tgz"
+dsh plugin --profile web add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.8/oin111-dsh-comfyui-0.6.8.tgz
 # профиль desktop
-dsh plugin --profile desktop add "$HOME/Downloads/oin111-dsh-comfyui-0.6.8.tgz"
+dsh plugin --profile desktop add https://github.com/oin111/dsh-comfyui/releases/download/v0.6.8/oin111-dsh-comfyui-0.6.8.tgz
 ```
 
 После перезапуска приложения в боковой панели появится вход в панель, в настройках — раздел «ComfyUI», а агент сразу получит все инструменты и сопутствующий skill.
