@@ -22,9 +22,9 @@ cd tests/integration
 
 # setup runs npm ci here, initializes isolated web/headless profiles,
 # installs the archive into both, and generates the mock configuration.
-npm run setup -- ./oin111-dsh-comfyui-0.6.5.tgz
+npm run setup -- ./oin111-dsh-comfyui-0.6.6.tgz
 npm run test:syntax
-npm run test:package -- ./oin111-dsh-comfyui-0.6.5.tgz
+npm run test:package -- ./oin111-dsh-comfyui-0.6.6.tgz
 npm test
 ```
 
