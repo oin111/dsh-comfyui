@@ -18,7 +18,7 @@
 > | **@oin111/dsh-comfyui 0.6.x** | **0.2.0-rc.2 – 0.2.x** (incl. 0.2.1 alphas) | Background jobs follow the 0.2 contract (owner = SessionId, outcome in `result`); cancel only touches this plugin's prompt; works in PTC mode |
 > | upstream dsh-comfyui 0.5.x | 0.1.2 – 0.1.7 | Use upstream on older hosts |
 >
-> Install: `dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.4.tgz`
+> Install: `dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.5.tgz`
 
 ## Backend safety and transfer limits
 
@@ -29,7 +29,7 @@
 - Cancellation aborts an in-flight history fetch. Even if history fails concurrently, the plugin awaits a targeted `cancelPrompt` attempt before reporting killed/interrupted or removing tracking. Cleanup is best-effort: an unreachable backend may continue work. Only a queue-confirmed matching running prompt is interrupted; unrelated prompts are not intentionally stopped.
 - Media origins use only an admitted request's Host and the host server's protocol, never Referer. The fallback is the concrete bind address; LAN detection is used only for wildcard binds. Asset deletion attempts file removal only under an explicitly configured absolute, accessible `outputDir`; otherwise it removes only the index record.
 
-Version **0.6.4** is a local-only media download filename fix, not yet published. Run `npm pack` before the local install commands below. UI defaults to Russian; English preferences are preserved and old `zh` preferences migrate to Russian. Agent tool descriptions and the companion skill use English, with Russian as the default response language.
+Version **0.6.5** is published on [GitHub Releases](https://github.com/oin111/dsh-comfyui/releases/tag/v0.6.5); it has not been published to npm. Before the local install commands below, download the release archive or run `npm pack` in the source directory. UI defaults to Russian; English preferences are preserved and old `zh` preferences migrate to Russian. Agent tool descriptions and the companion skill use English, with Russian as the default response language.
 
 ## Features
 
@@ -99,9 +99,9 @@ The DH settings page gets a "ComfyUI" section: server address, API key env var n
 
 ```sh
 # web profile
-dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.4.tgz
+dsh plugin --profile web add ./oin111-dsh-comfyui-0.6.5.tgz
 # desktop profile
-dsh plugin --profile desktop add ./oin111-dsh-comfyui-0.6.4.tgz
+dsh plugin --profile desktop add ./oin111-dsh-comfyui-0.6.5.tgz
 ```
 
 After restarting the app: a panel entry appears in the sidebar, a "ComfyUI" section in settings, and the agent gets all tools plus the companion skill right away.
