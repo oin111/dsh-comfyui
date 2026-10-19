@@ -1,0 +1,132 @@
+{
+  "scope": "Historical real DSH host integration against deterministic ComfyUI and LLM mocks; no browser or GPU pass claimed",
+  "sourceCommit": "38e9105f9d6cb8201e950e4baee8bdb8fdbf7d40",
+  "startedAt": "2026-10-19T13:50:01.923Z",
+  "finishedAt": "2026-10-19T13:50:17.104Z",
+  "versions": {
+    "node": "v24.19.0",
+    "npm": "11.9.0",
+    "pnpm": "11.25.0",
+    "dsh": "0.2.1-rc.2",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "package": {
+    "name": "@oin111/dsh-comfyui",
+    "version": "0.6.5",
+    "sha256": "fec126ebaf5245620c86bbd3cdd3ba04c04449c3d0c0037173833621fa6773b5",
+    "integrity": {
+      "status": "passed",
+      "filesPerProfile": 54,
+      "profiles": [
+        "web",
+        "headless"
+      ]
+    }
+  },
+  "integration": {
+    "status": "passed",
+    "passed": 14,
+    "total": 14,
+    "checks": [
+      {
+        "name": "DSH authenticated browser-server bootstrap",
+        "status": "passed"
+      },
+      {
+        "name": "Unauthenticated plugin route denied",
+        "status": "passed"
+      },
+      {
+        "name": "Cross-origin plugin route denied",
+        "status": "passed"
+      },
+      {
+        "name": "Plugin configuration and backend probe",
+        "status": "passed"
+      },
+      {
+        "name": "Twenty concurrent workflow saves survive",
+        "status": "passed"
+      },
+      {
+        "name": "Browser-facing workflow run",
+        "status": "passed"
+      },
+      {
+        "name": "Completed run becomes an asset",
+        "status": "passed"
+      },
+      {
+        "name": "Authenticated same-origin media proxy",
+        "status": "passed"
+      },
+      {
+        "name": "Actual DSH headless E2E_SYNC",
+        "status": "passed"
+      },
+      {
+        "name": "Actual DSH headless E2E_ASYNC",
+        "status": "passed"
+      },
+      {
+        "name": "Actual DSH headless E2E_CANCEL",
+        "status": "passed"
+      },
+      {
+        "name": "Actual DSH headless E2E_SANDBOX",
+        "status": "passed"
+      },
+      {
+        "name": "Actual DSH headless E2E_PTC",
+        "status": "passed"
+      },
+      {
+        "name": "Cancellation reached only mock prompt(s)",
+        "status": "passed"
+      }
+    ]
+  },
+  "ptc": {
+    "status": "passed",
+    "runtime": "actual DSH run_code",
+    "backend": "bwrap",
+    "mode": "workspace-write",
+    "enforcement": "full",
+    "environmentEmpty": true,
+    "workspaceWriteSucceeded": true,
+    "siblingWriteDenied": true,
+    "denialCode": "EROFS",
+    "siblingFileAbsent": true,
+    "comfyuiSdkRun": "completed",
+    "sandboxDeniedDiagnostic": false,
+    "diagnosticNote": "Guest code caught the filesystem exception; denial is independently verified by EROFS and absence of the sibling file."
+  },
+  "browser": {
+    "status": "blocked",
+    "reason": "Built-in cloud browser returned ERR_CONNECTION_REFUSED for the executor-local DSH loopback listener. The browser and independently invoked executor commands did not share the server network/process view. All passing HTTP tests supervised the mock, DSH, and test client in one invocation. No browser pass, public tunnel, or sandbox bypass."
+  },
+  "gpu": {
+    "status": "not-run",
+    "reason": "Synthetic ComfyUI mock only"
+  },
+  "redaction": "Summary retains check outcomes and package provenance only. Runtime logs, generated credentials, request IDs, and machine-specific paths are excluded.",
+  "relocatedHarnessVerification": {
+    "startedAt": "2026-10-19T14:04:21.638Z",
+    "finishedAt": "2026-10-19T14:04:36.865Z",
+    "status": "passed",
+    "passed": 14,
+    "total": 14,
+    "setup": "Fresh local dependency install and both isolated plugin profiles succeeded after relocation under tests/integration.",
+    "syntax": "All 8 JavaScript/Bash scripts passed syntax validation.",
+    "packageSha256": "fec126ebaf5245620c86bbd3cdd3ba04c04449c3d0c0037173833621fa6773b5",
+    "filesPerProfile": 54,
+    "ptcBackend": "bwrap",
+    "ptcEnforcement": "full",
+    "browser": "not rerun; historical browser E2E remains blocked by loopback isolation",
+    "gpu": "not tested"
+  },
+  "publishedSourceCommit": "5f80e3b5820dca5451702fe428cdb6be0ec71581",
+  "sourceTree": "72825109f300389ff264744dd78e28d7e8920349",
+  "publicationNote": "The published source commit has the exact same Git tree as local rebuild 38e9105; GitHub API publication changes commit metadata, not source bytes."
+}

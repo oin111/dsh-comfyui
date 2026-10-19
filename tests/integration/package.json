@@ -1,0 +1,19 @@
+{
+  "name": "dsh-comfyui-independent-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "bash scripts/setup.sh",
+    "test": "node scripts/run-integration.mjs",
+    "test:package": "node scripts/verify-package.mjs",
+    "start:browser": "bash scripts/start-browser.sh",
+    "test:syntax": "node scripts/check-syntax.mjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.2",
+    "pnpm": "11.25.0"
+  },
+  "engines": {
+    "node": ">=22.19"
+  }
+}
