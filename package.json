@@ -1,6 +1,6 @@
 {
   "name": "@oin111/dsh-comfyui",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "description": "Let the DeepSeek Harness agent smartly drive a local or remote ComfyUI to generate anything, with workflow and asset management panels, per-workflow skill packs, a companion skill and a same-origin media proxy.",
   "repository": {
     "type": "git",

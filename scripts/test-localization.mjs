@@ -41,7 +41,7 @@ test('production sources, built text, editable documentation and package metadat
   for (const file of files) assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /\p{Script=Han}/u, file)
   assert.equal(fs.existsSync('README.zh-CN.md'), false)
   const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'))
-  assert.equal(pkg.version, '0.6.7')
+  assert.equal(pkg.version, '0.6.8')
   assert.ok(!pkg.files.includes('README.zh-CN.md'))
 })
 
