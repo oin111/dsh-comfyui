@@ -5,7 +5,8 @@
  * WebSocket progress channel is deliberately unused (history polling is
  * simpler and works across proxies and remote installs).
  */
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import type { ObjectInfoCache } from './object-info-cache.js'
 
 /** One media file produced by a workflow output node. */
 export interface ComfyUIMediaRef {
@@ -253,6 +254,7 @@ export class ComfyUIClient {
     private readonly apiKey: string | undefined,
     private readonly connectTimeoutMs: number,
     private readonly maxMediaBytes: number,
+    private readonly objectInfoCache?: ObjectInfoCache,
   ) {}
 
   private base(): string {
@@ -561,6 +563,16 @@ export class ComfyUIClient {
   /** Node definitions for workflow construction (comfyui_object_info). */
   async objectInfo(): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>('/object_info')
+  }
+
+  /** Cached definitions for parameter application. Explicit discovery/editor
+   * reads remain fresh (uploaded media and custom-node lists can change). */
+  async objectInfoCached(): Promise<Record<string, unknown>> {
+    const load = () => this.objectInfo()
+    if (this.objectInfoCache === undefined) return load()
+    // Hash credentials so the cache does not retain another plaintext copy.
+    const key = createHash('sha256').update(JSON.stringify([this.base(), this.apiKey ?? null])).digest('hex')
+    return this.objectInfoCache.get(key, load)
   }
 
   /** Server health/version probe. */

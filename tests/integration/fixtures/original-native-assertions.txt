@@ -1,0 +1,3 @@
+   const calls=events.filter(x=>x.type==='tool_call'),results=events.filter(x=>x.type==='tool_result');assert(calls.length>0);for(const r of results)assert.equal(r.status,'completed',JSON.stringify(r));
+   const canonical=(await fs.readFile(observer,'utf8')).trim().split('\n').filter(Boolean).map(x=>JSON.parse(x));for(const r of canonical.filter(x=>x.kind==='tool-result'))assert.equal(r.result.isError,false,JSON.stringify(r));
+   if(scenario==='E2E_ASYNC')assert(calls.some(x=>x.tool==='job_output'));if(scenario==='E2E_CANCEL'){assert(calls.some(x=>x.tool==='job_kill'));const state=await(await fetch(mockBase+'/__state')).json();assert(state.cancelled.length>0);assert(!state.cancelled.includes(unrelated),'unrelated running prompt was cancelled');}

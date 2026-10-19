@@ -129,6 +129,28 @@ export interface TrackedState {
  * copies. The data directory and its ancestry must remain trusted/stable. */
 const assetMutations = new Map<string, Promise<void>>()
 
+/** Workflow writers share a canonical-path lock across store instances too. */
+const workflowMutations = new Map<string, Promise<void>>()
+
+/** Publish complete JSON by atomic rename; never follow a predictable temp symlink. */
+async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  const temporary = `${path}.${randomUUID()}.tmp`
+  const handle = await open(temporary, 'wx', 0o600)
+  let published = false
+  try {
+    try {
+      await handle.writeFile(JSON.stringify(value, null, 2) + NEWLINE, 'utf8')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await rename(temporary, path)
+    published = true
+  } finally {
+    if (!published) await unlink(temporary)
+  }
+}
+
 /** JSON-file-backed store for workflows and assets. */
 export class ComfyUIStore {
   private readonly workflowsPath: string
@@ -152,23 +174,39 @@ export class ComfyUIStore {
   }
 
   private async writeAssets(list: AssetRecord[]): Promise<void> {
-    const temporary = `${this.assetsPath}.${randomUUID()}.tmp`
-    // Exclusive creation refuses existing files/symlinks. Do not clean up a
-    // path unless this operation successfully created it.
-    const handle = await open(temporary, 'wx', 0o600)
-    let published = false
-    try {
+    await writeJsonAtomic(this.assetsPath, list)
+  }
+
+  private workflowMutation: Promise<unknown> = Promise.resolve()
+
+  private mutateWorkflows<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.workflowMutation.then(async () => {
+      const key = join(await realpath(dirname(this.workflowsPath)), 'workflows.json')
+      const result = (workflowMutations.get(key) ?? Promise.resolve()).then(operation)
+      const settled = result.then(() => {}, () => {})
+      workflowMutations.set(key, settled)
       try {
-        await handle.writeFile(JSON.stringify(list, null, 2) + NEWLINE, 'utf8')
+        return await result
       } finally {
-        await handle.close()
+        if (workflowMutations.get(key) === settled) workflowMutations.delete(key)
       }
-      await rename(temporary, this.assetsPath)
-      published = true
-    } finally {
-      if (!published) await unlink(temporary)
+    })
+    this.workflowMutation = next.catch(() => {})
+    return next
+  }
+
+  /** A failed read must not silently turn a mutation into an empty-library write. */
+  private async workflowsForMutation(): Promise<StoredWorkflow[]> {
+    try {
+      const list: unknown = JSON.parse(await readFile(this.workflowsPath, 'utf8'))
+      if (!Array.isArray(list)) throw new Error('invalid workflow library snapshot')
+      return list as StoredWorkflow[]
+    } catch (error) {
+      if ((error as { code?: string }).code === 'ENOENT') return []
+      throw error
     }
   }
+
   private readonly trackedPath: string
   private readonly mediaSizesPath: string
   private readonly mediaHashesPath: string
@@ -270,7 +308,7 @@ export class ComfyUIStore {
   }
 
   private async writeWorkflows(list: StoredWorkflow[]): Promise<void> {
-    await writeFile(this.workflowsPath, `${JSON.stringify(list, null, 2)}\n`, 'utf8')
+    await writeJsonAtomic(this.workflowsPath, list)
   }
 
   /** Create or update a workflow (update when `input.id` matches an existing one). */
@@ -284,82 +322,88 @@ export class ComfyUIStore {
     source?: 'user' | 'comfyui'
     comfyuiFile?: string
   }): Promise<{ ok: true; workflow: StoredWorkflow } | { ok: false; error: string }> {
-    const problem = validateWorkflow(input.workflow)
-    if (problem !== undefined) return { ok: false, error: problem }
-    const name = sanitizeText(input.name, 80) || 'unnamed-workflow'
-    const description = sanitizeText(input.description, 2000)
-    const workflow = input.workflow as StoredWorkflow['workflow']
-    const parameters = Array.isArray(input.parameters) && input.parameters.length > 0 ? input.parameters : undefined
-    const tags = Array.isArray(input.tags)
-      ? [...new Set(input.tags.map((tag) => sanitizeText(tag, 24)).filter((tag) => tag !== ''))]
-      : undefined
-    const now = new Date().toISOString()
-    const list = await this.listWorkflows()
-    if (input.id !== undefined) {
-      const index = list.findIndex((entry) => entry.id === input.id)
-      if (index === -1) return { ok: false, error: `workflow "${input.id}" not found` }
-      const updated: StoredWorkflow = {
-        ...list[index]!, name, description, workflow,
+    return this.mutateWorkflows(async () => {
+      const problem = validateWorkflow(input.workflow)
+      if (problem !== undefined) return { ok: false as const, error: problem }
+      const name = sanitizeText(input.name, 80) || 'unnamed-workflow'
+      const description = sanitizeText(input.description, 2000)
+      const workflow = input.workflow as StoredWorkflow['workflow']
+      const parameters = Array.isArray(input.parameters) && input.parameters.length > 0 ? input.parameters : undefined
+      const tags = Array.isArray(input.tags)
+        ? [...new Set(input.tags.map((tag) => sanitizeText(tag, 24)).filter((tag) => tag !== ''))]
+        : undefined
+      const now = new Date().toISOString()
+      const list = await this.workflowsForMutation()
+      if (input.id !== undefined) {
+        const index = list.findIndex((entry) => entry.id === input.id)
+        if (index === -1) return { ok: false as const, error: `workflow "${input.id}" not found` }
+        const updated: StoredWorkflow = {
+          ...list[index]!, name, description, workflow,
+          parameters,
+          tags: tags !== undefined ? tags : list[index]!.tags,
+          // Skill-pack fields are owned by the skill routes, not the workflow
+          // editor: a plain save must never drop a pack the user attached.
+          skillDir: list[index]!.skillDir,
+          requireSkill: list[index]!.requireSkill,
+          source: input.source ?? list[index]!.source,
+          comfyuiFile: input.comfyuiFile ?? list[index]!.comfyuiFile,
+          updatedAt: now,
+        }
+        list[index] = updated
+        await this.writeWorkflows(list)
+        return { ok: true as const, workflow: updated }
+      }
+      const created: StoredWorkflow = {
+        id: randomUUID(), name, description, workflow,
         parameters,
-        tags: tags !== undefined ? tags : list[index]!.tags,
-        // Skill-pack fields are owned by the skill routes, not the workflow
-        // editor: a plain save must never drop a pack the user attached.
-        skillDir: list[index]!.skillDir,
-        requireSkill: list[index]!.requireSkill,
-        source: input.source ?? list[index]!.source,
-        comfyuiFile: input.comfyuiFile ?? list[index]!.comfyuiFile,
+        tags: tags !== undefined && tags.length > 0 ? tags : undefined,
+        source: input.source,
+        comfyuiFile: input.comfyuiFile,
         updatedAt: now,
       }
-      list[index] = updated
+      list.push(created)
       await this.writeWorkflows(list)
-      return { ok: true, workflow: updated }
-    }
-    const created: StoredWorkflow = {
-      id: randomUUID(), name, description, workflow,
-      parameters,
-      tags: tags !== undefined && tags.length > 0 ? tags : undefined,
-      source: input.source,
-      comfyuiFile: input.comfyuiFile,
-      updatedAt: now,
-    }
-    list.push(created)
-    await this.writeWorkflows(list)
-    return { ok: true, workflow: created }
+      return { ok: true as const, workflow: created }
+    })
   }
 
   /** Patch the skill-pack fields of one workflow without touching its JSON or
    * parameters. `skillDir: null` detaches the pack (the directory stays on
    * disk until an explicit destroy). */
   async updateWorkflowSkill(id: string, patch: { skillDir?: string | null; requireSkill?: boolean }): Promise<StoredWorkflow | undefined> {
-    const list = await this.listWorkflows()
-    const index = list.findIndex((entry) => entry.id === id)
-    if (index === -1) return undefined
-    const current = list[index]!
-    const next: StoredWorkflow = { ...current, updatedAt: new Date().toISOString() }
-    if (patch.skillDir !== undefined) {
-      if (patch.skillDir === null) {
-        delete next.skillDir
-        delete next.requireSkill
-      } else {
-        next.skillDir = patch.skillDir
+    return this.mutateWorkflows(async () => {
+      const list = await this.workflowsForMutation()
+      const index = list.findIndex((entry) => entry.id === id)
+      if (index === -1) return undefined
+      const current = list[index]!
+      const next: StoredWorkflow = { ...current, updatedAt: new Date().toISOString() }
+      if (patch.skillDir !== undefined) {
+        if (patch.skillDir === null) {
+          delete next.skillDir
+          delete next.requireSkill
+        } else {
+          next.skillDir = patch.skillDir
+        }
       }
-    }
-    if (patch.requireSkill !== undefined) {
-      if (patch.requireSkill) next.requireSkill = true
-      else delete next.requireSkill
-    }
-    list[index] = next
-    await this.writeWorkflows(list)
-    return next
+      if (patch.requireSkill !== undefined) {
+        if (patch.requireSkill) next.requireSkill = true
+        else delete next.requireSkill
+      }
+      list[index] = next
+      await this.writeWorkflows(list)
+      return next
+    })
   }
 
   /** Delete a workflow by id; false when it did not exist. */
   async deleteWorkflow(id: string): Promise<boolean> {
-    const list = await this.listWorkflows()
-    const next = list.filter((entry) => entry.id !== id)
-    if (next.length === list.length) return false
-    await this.writeWorkflows(next)
-    return true
+    return this.mutateWorkflows(async () => {
+      const list = await this.workflowsForMutation()
+      const next = list.filter((entry) => entry.id !== id)
+      if (next.length === list.length) return false
+      await this.writeWorkflows(next)
+      return true
+    })
   }
 
   async listAssets(): Promise<AssetRecord[]> {
@@ -412,9 +456,12 @@ export class ComfyUIStore {
 
   /** Load the persisted queue-tracker state (empty when absent/corrupt). */
   async loadTracked(): Promise<TrackedState> {
-    const data = await readJsonFile<Partial<TrackedState>>(this.trackedPath, {})
+    const parsed = await readJsonFile<Partial<TrackedState> | null>(this.trackedPath, {})
+    const data = typeof parsed === 'object' && parsed !== null ? parsed : {}
     const runs = Array.isArray(data.runs) ? data.runs.filter((run) =>
-      typeof run === 'object' && run !== null && typeof run.promptId === 'string')
+      typeof run === 'object' && run !== null && typeof run.promptId === 'string'
+      && typeof run.ts === 'string' && typeof run.source === 'string'
+      && (run.workflowName === null || typeof run.workflowName === 'string'))
       : []
     const archived = Array.isArray(data.archived) ? data.archived.filter((id): id is string => typeof id === 'string') : []
     return { runs, archived }
@@ -422,6 +469,6 @@ export class ComfyUIStore {
 
   /** Persist the queue-tracker state so completed runs survive restarts. */
   async saveTracked(state: TrackedState): Promise<void> {
-    await writeFile(this.trackedPath, `${JSON.stringify(state)}\n`, 'utf8')
+    await writeJsonAtomic(this.trackedPath, state)
   }
 }

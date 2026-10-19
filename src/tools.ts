@@ -33,7 +33,8 @@ export interface ComfyUIRuntime {
   getConfig(): Config
   /** Resolve the API key per request (credentials store, then environment). */
   getApiKey(): Promise<string | undefined>
-  createClient(apiKey: string | undefined): ComfyUIClient
+  /** Resolve credentials against one immutable server/config snapshot. */
+  getClient(): Promise<ComfyUIClient>
   /** Absolute media proxy URL base: explicit config > admitted request Host > bind-address fallback (LAN detection only for wildcard binds). */
   proxyBase(): string | undefined
   /** Remembers the origin browsers use to reach this server (Host header). */
@@ -49,7 +50,7 @@ export interface ComfyUIRuntime {
     source: string
     parameters?: WorkflowParameter[]
     values?: Record<string, unknown>
-  }): Promise<string>
+  }, client?: ComfyUIClient): Promise<string>
   /** Stop tracking a prompt (used when a tool call fails before completion). */
   untrack(promptId: string): void
   /** Every prompt this plugin queued and is still waiting on. */
@@ -523,13 +524,12 @@ function runDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefinition {
       const mode = args.mode === undefined ? 'sync' : args.mode
       if (mode !== 'sync' && mode !== 'async') throw new Error(`comfyui_run: mode must be sync or async, got ${String(mode)}`)
       const config = runtime.getConfig()
-      const apiKey = await runtime.getApiKey()
-      const client = runtime.createClient(apiKey)
+      const client = await runtime.getClient()
       const { workflow, label } = buildWorkflow(args)
       // Resolve the jobs service before queueing: a refused async call must
       // not leave a prompt running unattended on the server.
       const jobs = mode === 'async' ? requireJobs(ctx, 'comfyui_run') : undefined
-      const promptId = await runtime.queue(workflow, { workflowName: label, source: 'tool' })
+      const promptId = await runtime.queue(workflow, { workflowName: label, source: 'tool' }, client)
       const waitMs = clampWait(args.timeout_ms, config.timeoutMs)
 
       if (jobs !== undefined) {
@@ -601,7 +601,7 @@ function objectInfoDefinition(runtime: ComfyUIRuntime): ToolDefinition {
     },
     timeoutMs: 60_000,
     async execute(args, exec) {
-      const client = runtime.createClient(await runtime.getApiKey())
+      const client = await runtime.getClient()
       const raw = await abortable(client.objectInfo(), exec.signal)
       const entries = Object.entries(raw as Record<string, {
         display_name?: string
@@ -915,7 +915,7 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
         // the new voice at run time. Force the TTS rescan first (the object_info
         // COMBO does not self-heal), then re-derive the derived fields only.
         await abortable(runtime.refreshVoiceLibrary(), exec.signal)
-        const client = runtime.createClient(await runtime.getApiKey())
+        const client = await runtime.getClient()
         const objectInfo = await abortable(client.objectInfo(), exec.signal).catch((error: unknown) => {
           if (exec.signal.aborted) throw error
           return undefined
@@ -953,7 +953,7 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
         throw new Error(`comfyui_workflow: workflow "${saved.name}" requires reading its skill pack before running — call action: skill { id: "${saved.id}" } first, then run.`)
       }
       const config = runtime.getConfig()
-      const client = runtime.createClient(await runtime.getApiKey())
+      const client = await runtime.getClient()
       const values = typeof args.parameters === 'object' && args.parameters !== null
         ? (args.parameters as Record<string, unknown>)
         : {}
@@ -969,7 +969,7 @@ function workflowDefinition(runtime: ComfyUIRuntime, ctx: Context): ToolDefiniti
         source: 'workflow-tool',
         parameters: saved.parameters,
         values,
-      })
+      }, client)
       const waitMs = clampWait(args.timeout_ms, config.timeoutMs)
       if (jobs !== undefined) {
         const jobId = await startBackgroundRun({

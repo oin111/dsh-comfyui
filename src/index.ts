@@ -11,7 +11,9 @@ import type {} from '@deepseek-ai/dsh-settings'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { Config, resolveConfig, type Config as ConfigType } from './config.js'
-import { ComfyUIClient, CLIENT_ID } from './comfyui.js'
+import { CLIENT_ID } from './comfyui.js'
+import { resolveClient } from './client-provider.js'
+import { ObjectInfoCache } from './object-info-cache.js'
 import { ComfyUIStore } from './store.js'
 import { QueueTracker } from './queue.js'
 import { convertGraphToApi, flattenDynamicCombos } from './convert.js'
@@ -41,22 +43,6 @@ export { Config }
 export const inject = ['tools']
 
 const COMFYUI_NS = 'comfyui'
-
-/** object_info is large and changes only when nodes are (re)installed. */
-const OBJECT_INFO_TTL_MS = 60_000
-let objectInfoCache: { ts: number; value: Record<string, unknown> } | undefined
-
-async function objectInfoCached(client: ComfyUIClient): Promise<Record<string, unknown> | undefined> {
-  const now = Date.now()
-  if (objectInfoCache !== undefined && now - objectInfoCache.ts < OBJECT_INFO_TTL_MS) return objectInfoCache.value
-  try {
-    const value = await client.objectInfo()
-    objectInfoCache = { ts: now, value }
-    return value
-  } catch {
-    return undefined
-  }
-}
 
 /** Structural slice of the credentials service (avoid a hard package dep). */
 interface CredentialsService {
@@ -145,6 +131,7 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
   })
   await tracker.init()
   const progress = new ProgressTracker()
+  const objectInfoCache = new ObjectInfoCache()
 
   // Best-effort progress feed: listen on the server's WebSocket for `progress`
   // events. The socket uses the same client id as queued prompts (CLIENT_ID),
@@ -161,6 +148,7 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
   }, 'dsh-comfyui: progress')
   /** Pick up a new config in place; a new baseUrl re-points the progress socket. */
   const refreshConfig = (next: ConfigType): void => {
+    objectInfoCache.clear()
     Object.assign(resolved, next)
     const url = progressUrl()
     if (url !== attachedUrl) {
@@ -184,7 +172,7 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
   const runtime: ComfyUIRuntime = {
     getConfig: () => resolved,
     getApiKey: () => resolveApiKey(ctx, resolved.apiKeyEnv),
-    createClient: (apiKey) => new ComfyUIClient(resolved.baseUrl, apiKey, resolved.connectTimeoutMs, resolved.maxMediaBytes),
+    getClient: () => resolveClient(resolved, (reference) => resolveApiKey(ctx, reference), objectInfoCache),
     hostHint,
     proxyBase: () => {
       // Explicit external media host wins (LAN/domain/reverse-proxy config);
@@ -216,12 +204,12 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
         return { ok: false, error: error instanceof Error ? error.message : String(error) }
       }
     },
-    queue: async (workflow, meta) => {
-      const client = runtime.createClient(await resolveApiKey(ctx, resolved.apiKeyEnv))
+    queue: async (workflow, meta, suppliedClient) => {
+      const client = suppliedClient ?? await runtime.getClient()
       // Heals library entries saved with the pre-0.5.2 wrapped DynamicCombo shape (Issue #10).
       let prompt = flattenDynamicCombos(workflow as unknown as Workflow)
       if (meta.parameters !== undefined && meta.parameters.length > 0) {
-        const objectInfo = await objectInfoCached(client)
+        const objectInfo = await client.objectInfoCached().catch(() => undefined)
         const slots = await store.loadSlots()
         const loaded = slots.filter((slot): slot is NonNullable<typeof slot> => slot !== null)
         prompt = applyWorkflowParameters(prompt, meta.parameters, meta.values ?? {}, objectInfo, await store.loadMediaSizes(), loaded)
@@ -250,8 +238,14 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
       // reports the current library. Servers without TTS-Audio-Suite answer
       // 404; the failure is swallowed and callers proceed with the object_info
       // snapshot they get anyway.
-      const client = runtime.createClient(await resolveApiKey(ctx, resolved.apiKeyEnv))
-      return client.getOk('/api/tts-audio-suite/voice-library?refresh=1', 20_000)
+      objectInfoCache.clear()
+      try {
+        const client = await runtime.getClient()
+        return await client.getOk('/api/tts-audio-suite/voice-library?refresh=1', 20_000)
+      } finally {
+        // Discard any flight that began before or during the server rescan.
+        objectInfoCache.clear()
+      }
     },
     deleteWorkflow: (id) => store.deleteWorkflow(id),
     skillPacks,
@@ -265,11 +259,11 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
     deleteAsset: (promptId) => store.deleteAsset(promptId),
     clearAssets: () => store.clearAssets(),
     sweep: async () => {
-      const client = runtime.createClient(await resolveApiKey(ctx, resolved.apiKeyEnv))
+      const client = await runtime.getClient()
       return tracker.sweep({ client, store, maxItems: resolved.maxMediaItems, proxyBase: runtime.proxyBase() })
     },
     listComfyWorkflows: async () => {
-      const client = runtime.createClient(await resolveApiKey(ctx, resolved.apiKeyEnv))
+      const client = await runtime.getClient()
       const entries = await client.listUserData('workflows')
       const library = await store.listWorkflows()
       return entries
@@ -288,16 +282,16 @@ export async function apply(ctx: Context, entryConfig: Partial<Record<keyof Conf
         })
     },
     getComfyWorkflow: async (file) => {
-      const client = runtime.createClient(await resolveApiKey(ctx, resolved.apiKeyEnv))
+      const client = await runtime.getClient()
       return client.getUserDataFile(`workflows/${file}`)
     },
     analyzeComfyWorkflow: async (file) => {
-      const client = runtime.createClient(await resolveApiKey(ctx, resolved.apiKeyEnv))
+      const client = await runtime.getClient()
       const graph = await client.getUserDataFile(`workflows/${file}`)
       return analyzeGraph(graph)
     },
     extractComfyWorkflow: async ({ file, mode }) => {
-      const client = runtime.createClient(await resolveApiKey(ctx, resolved.apiKeyEnv))
+      const client = await runtime.getClient()
       const [graph, objectInfo] = await Promise.all([
         client.getUserDataFile(`workflows/${file}`),
         client.objectInfo(),

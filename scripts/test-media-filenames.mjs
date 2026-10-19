@@ -68,7 +68,7 @@ async function fixture(run) {
   let handler
   const client = new ComfyUIClient(`http://127.0.0.1:${backend.address().port}`, undefined, 1000, 1024)
   mountComfyUIProxy({}, {
-    createClient: () => client, getApiKey: async () => undefined,
+    getClient: async () => client, getApiKey: async () => undefined,
     listAssets: async () => [{ promptId: 'archived', media: [{ node: '1', index: 0, filename: 'ComfyUI_00003_.png', subfolder: 'saved', type: 'output' }] }],
   }, { register(route) { handler = route.handler; return () => {} } })
   const proxy = createServer((q, s) => handler(q, s))
