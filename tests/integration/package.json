@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "setup": "bash scripts/setup.sh",
-    "test": "node scripts/run-integration.mjs",
+    "test": "npm run test:validation && node scripts/run-integration.mjs",
+    "test:validation": "node --test scripts/test-native-validation.mjs",
     "test:package": "node scripts/verify-package.mjs",
     "start:browser": "bash scripts/start-browser.sh",
     "test:syntax": "node scripts/check-syntax.mjs"

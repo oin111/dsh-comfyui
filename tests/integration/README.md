@@ -56,6 +56,10 @@ The 14 checks cover:
 
 `E2E_SYNC`, `E2E_ASYNC`, `E2E_CANCEL`, `E2E_SANDBOX`, and `E2E_PTC` select deterministic mock-model responses. Mock ComfyUI serves a fixed tiny PNG. These checks do not perform inference or validate real GPU workflows.
 
+Native trace validation requires the exact expected tool sequence, a completed NDJSON result for every call ID, and matching non-error canonical results. Sync runs must contain a completed prompt and output media; async runs must return a background job and a completed `job_output` for that same job/prompt with parsed generation results. Cancellation must target the returned job and cancel exactly the newly submitted mock prompt, preserving the unrelated running sentinel. Before/after mock state rejects stale or unrelated prompt evidence.
+
+`npm run test:validation` runs the offline malformed-trace regressions, including a VM reproduction of the verbatim pre-fix assertions from `7ba991b`. Both this harness's `npm test` and the repository root's `npm test` run these regressions automatically, without needing DSH dependencies for the offline tests.
+
 `observe-tools.mjs` observes canonical tool results and asks DSH's sandbox provider which backend it selects. It does not replace the runner, mock the sandbox, disable security, or expand permissions. A `sandbox.denied` diagnostic of `false` does not invalidate the boundary test: guest code deliberately catches the filesystem exception, and the test independently verifies both the denial code and the absence of the file.
 
 ## Recorded result

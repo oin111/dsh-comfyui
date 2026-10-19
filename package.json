@@ -35,7 +35,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "prepack": "npm run build",
     "test:localization:full": "npm run build && LOCALIZATION_FULL=1 node --test scripts/test-localization.mjs",
-    "test": "npm run build && node --test scripts/test-assets-clear.mjs scripts/test-assets-clear-ui.mjs scripts/test-backend-boundaries.mjs scripts/test-media-filenames.mjs scripts/test-workflow-concurrency.mjs scripts/test-object-info-cache.mjs scripts/test-runtime-races.mjs scripts/test-queue-tracker.mjs scripts/test-queue-polling.mjs && node scripts/test-host-compat.mjs && node scripts/test-store-params.mjs && node scripts/test-skillpack.mjs && node scripts/test-transfer.mjs && node scripts/test-convert.mjs && node scripts/test-named-widgets.mjs && node --test scripts/test-lora-params.mjs scripts/test-lora-editor.mjs && node --test scripts/test-localization.mjs"
+    "test": "node --test tests/integration/scripts/test-native-validation.mjs && npm run build && node --test scripts/test-assets-clear.mjs scripts/test-assets-clear-ui.mjs scripts/test-backend-boundaries.mjs scripts/test-media-filenames.mjs scripts/test-workflow-concurrency.mjs scripts/test-object-info-cache.mjs scripts/test-runtime-races.mjs scripts/test-queue-tracker.mjs scripts/test-queue-polling.mjs && node scripts/test-host-compat.mjs && node scripts/test-store-params.mjs && node scripts/test-skillpack.mjs && node scripts/test-transfer.mjs && node scripts/test-convert.mjs && node scripts/test-named-widgets.mjs && node --test scripts/test-lora-params.mjs scripts/test-lora-editor.mjs && node --test scripts/test-localization.mjs"
   },
   "keywords": [
     "deepseek",

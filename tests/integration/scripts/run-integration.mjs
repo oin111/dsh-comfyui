@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { randomUUID } from 'node:crypto';
+import { validateNativeScenario } from './validate-native.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const workspace=path.join(root,'runtime/workspace');
 const reports=path.join(root,'reports');
@@ -43,6 +44,7 @@ try{
  for(const scenario of ['E2E_SYNC','E2E_ASYNC','E2E_CANCEL','E2E_SANDBOX','E2E_PTC']){
   await check(`Actual DSH headless ${scenario}`,async()=>{
    let unrelated; if(scenario==='E2E_CANCEL'){const wf=structuredClone(workflow);wf['6'].inputs.e2e_delay_ms=60000;const r=await fetch(mockBase+'/prompt',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt:wf})});unrelated=(await r.json()).prompt_id;}
+   const before=await(await fetch(mockBase+'/__state')).json();
    const observer=path.join(reports,`${scenario}.canonical.jsonl`);await fs.writeFile(observer,'');
    const run=launch([dsh,'headless','--json',scenario],{cwd:workspace,env:{DSH_TOOLS_MODE:scenario==='E2E_PTC'||scenario==='E2E_SANDBOX'?'ptc':'native',DSH_E2E_OBSERVE_PATH:observer}});
    const timeout=setTimeout(()=>run.cp.kill('SIGTERM'),60000);const result=await run.done;clearTimeout(timeout);
@@ -50,14 +52,18 @@ try{
    assert.equal(result.code,0,result.stderr);const events=result.stdout.trim().split('\n').filter(Boolean).map(x=>JSON.parse(x));
    const calls=events.filter(x=>x.type==='tool_call'),results=events.filter(x=>x.type==='tool_result');assert(calls.length>0);for(const r of results)assert.equal(r.status,'completed',JSON.stringify(r));
    const canonical=(await fs.readFile(observer,'utf8')).trim().split('\n').filter(Boolean).map(x=>JSON.parse(x));for(const r of canonical.filter(x=>x.kind==='tool-result'))assert.equal(r.result.isError,false,JSON.stringify(r));
-   if(scenario==='E2E_ASYNC')assert(calls.some(x=>x.tool==='job_output'));if(scenario==='E2E_CANCEL'){assert(calls.some(x=>x.tool==='job_kill'));const state=await(await fetch(mockBase+'/__state')).json();assert(state.cancelled.length>0);assert(!state.cancelled.includes(unrelated),'unrelated running prompt was cancelled');}
+   let native;
+   if(['E2E_SYNC','E2E_ASYNC','E2E_CANCEL'].includes(scenario)) {
+    const state=await(await fetch(mockBase+'/__state')).json();
+    native=validateNativeScenario({scenario,events,canonical,state,before,unrelated});
+   }
    if(scenario==='E2E_PTC'||scenario==='E2E_SANDBOX'){
     const value=canonical.find(x=>x.name==='run_code')?.result.value;assert.equal(value.sandbox.mode,'workspace-write');assert.equal(value.sandbox.enforcement,'full');assert.equal(value.result.marker,'PTC_REAL_SANDBOX_OK');assert.equal(value.result.environmentEmpty,true);
     if(scenario==='E2E_SANDBOX'){assert.equal(value.result.outsideWriteDenied,true);assert(['EROFS','EACCES','EPERM'].includes(value.result.denialCode));assert.equal(await fs.readFile(path.join(workspace,'allowed.txt'),'utf8'),'inside workspace');await assert.rejects(fs.stat(path.join(root,'runtime/outside/denied.txt')),{code:'ENOENT'});}
     if(scenario==='E2E_PTC')assert.equal(value.result.run.status,'completed');
     return {tools:calls.map(x=>x.tool),sandbox:value.sandbox,backend:canonical.find(x=>x.kind==='sandbox-selection'),result:value.result};
    }
-   return {tools:calls.map(x=>x.tool)};
+   return {tools:calls.map(x=>x.tool),...native};
   });
  }
  await check('Cancellation reached only mock prompt(s)',async()=>{const state=await(await fetch(mockBase+'/__state')).json();assert(state.cancelled.length>0);return {cancelled:state.cancelled.length,prompts:state.prompts.length};});
