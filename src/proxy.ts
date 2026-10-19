@@ -112,7 +112,7 @@ export function mountComfyUIProxy(ctx: Context, runtime: ComfyUIRuntime, webServ
         // Direct file lookup (e.g. job preview_output thumbnails).
         const ref = { filename: file, subfolder: url.searchParams.get('subfolder') ?? '', type: url.searchParams.get('type') ?? 'output' }
         try {
-          const client = runtime.createClient(await runtime.getApiKey())
+          const client = await runtime.getClient()
           await relayViewStream(client, ref, request, response)
         } catch (error) {
           if (response.headersSent) {
@@ -135,7 +135,7 @@ export function mountComfyUIProxy(ctx: Context, runtime: ComfyUIRuntime, webServ
         return
       }
       try {
-        const client = runtime.createClient(await runtime.getApiKey())
+        const client = await runtime.getClient()
         const entry = await client.getHistory(prompt)
         const outputs = entry?.outputs ?? {}
         const nodeOutput = outputs[node]

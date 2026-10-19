@@ -265,7 +265,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
       }
       const startedAt = Date.now()
       try {
-        const client = runtime.createClient(await runtime.getApiKey())
+        const client = await runtime.getClient()
         const stats = await client.systemStats()
         sendJson(response, 200, {
           ok: true,
@@ -333,7 +333,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         sendJson(response, 400, { error: 'workflow is required' })
         return
       }
-      const client = runtime.createClient(await runtime.getApiKey())
+      const client = await runtime.getClient()
       const objectInfo = await client.objectInfo().catch(() => undefined)
       const parameters = analyzeWorkflowParameters(body.workflow as Workflow, objectInfo)
       sendJson(response, 200, { ok: true, parameters })
@@ -356,7 +356,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         sendJson(response, 400, { error: 'classType and inputKey are required' })
         return
       }
-      const client = runtime.createClient(await runtime.getApiKey())
+      const client = await runtime.getClient()
       const objectInfo = await client.objectInfo().catch(() => undefined)
       const options = inputOptions(objectInfo, classType, inputKey)
       const child = typeof body.parentValue === 'string'
@@ -397,7 +397,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
       // options/numberKind read below genuinely current. Best-effort: servers
       // without TTS-Audio-Suite (or unreachable) skip the call.
       await runtime.refreshVoiceLibrary()
-      const client = runtime.createClient(await runtime.getApiKey())
+      const client = await runtime.getClient()
       const objectInfo = await client.objectInfo().catch(() => undefined)
       // Re-derive only the object_info-derived fields; the parameter set
       // (including user-added advanced parameters) is preserved as saved.
@@ -433,7 +433,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         return
       }
       try {
-        const client = runtime.createClient(await runtime.getApiKey())
+        const client = await runtime.getClient()
         const [objectInfo, slots, assets, sizes] = await Promise.all([
           client.objectInfo().catch(() => undefined),
           runtime.loadSlots(),
@@ -580,7 +580,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
               const assets = await runtime.listAssets()
               const ref = findOutputRef(assets, name)
               if (ref !== undefined) {
-                const client = runtime.createClient(await runtime.getApiKey())
+                const client = await runtime.getClient()
                 const { bytes, contentType } = await client.fetchView(ref)
                 await client.uploadMedia(bytes, name, contentType)
               }
@@ -621,7 +621,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         // Forward the multipart body verbatim (field "image" matches ComfyUI's
         // /upload/image contract); the browser never talks to ComfyUI directly.
         const raw = await readRawBody(request, runtime.getConfig().maxMediaBytes + 64 * 1024)
-        const client = runtime.createClient(await runtime.getApiKey())
+        const client = await runtime.getClient()
         const result = await client.uploadFile(new Uint8Array(raw), contentType)
         sendJson(response, 200, { ok: true, name: result.name ?? '' })
       } catch (error) {
@@ -1388,7 +1388,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         return
       }
       try {
-        const client = runtime.createClient(await runtime.getApiKey())
+        const client = await runtime.getClient()
         const queue = await client.getQueue()
         const tracked = runtime.trackedRuns()
         const trackedBy = new Map(tracked.map((run) => [run.promptId, run]))
@@ -1432,7 +1432,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback
       }
       try {
-        const client = runtime.createClient(await runtime.getApiKey())
+        const client = await runtime.getClient()
         const tracked = runtime.trackedRuns()
         const trackedBy = new Map(tracked.map((run) => [run.promptId, run]))
         // Fallback names from the asset index: survives web-server restarts,
@@ -1491,7 +1491,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
         return
       }
       try {
-        const client = runtime.createClient(await runtime.getApiKey())
+        const client = await runtime.getClient()
         const entry = await client.getHistory(promptId)
         if (entry === undefined) {
           // No history entry: still waiting in ComfyUI's queue, or evicted.
@@ -1532,7 +1532,7 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
       if (body === undefined) return
       const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === 'string') : []
       try {
-        const client = runtime.createClient(await runtime.getApiKey())
+        const client = await runtime.getClient()
         switch (body.action) {
           case 'delete':
             await client.deleteQueueItems(ids)

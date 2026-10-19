@@ -1,6 +1,6 @@
 // Offline host-contract tests for the dsh 0.2.x line (run after `npm run build`).
 // Drives the real plugin entry `apply(ctx, config)` against a stub host shaped
-// like dsh 0.2.0-rc.2 / 0.2.1-alpha.2 and a stub ComfyUI HTTP server, then
+// like dsh 0.2.0-rc.2 / 0.2.1-rc.2 and a stub ComfyUI HTTP server, then
 // checks the package manifest against the host's install-time gates.
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -42,7 +42,7 @@ await test('every dsh peer admits the 0.2 line and rejects 0.1.x / 0.2.0-rc.1 / 
     .filter(([name]) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
   assert.ok(dshPeers.length > 0, 'at least one dsh peer is declared')
   for (const [name, range] of dshPeers) {
-    for (const ok of ['0.2.0-rc.2', '0.2.0', '0.2.1-alpha.1', '0.2.1-alpha.2', '0.2.9']) {
+    for (const ok of ['0.2.0-rc.2', '0.2.0', '0.2.1-alpha.1', '0.2.1-alpha.2', '0.2.1-rc.2', '0.2.9']) {
       assert.ok(semver.satisfies(ok, range, { includePrerelease: true }), `${name} ${range} should admit ${ok}`)
     }
     for (const bad of ['0.1.7-rc.2', '0.1.5-rc.3', '0.2.0-rc.1', '0.3.0-alpha.1', '0.3.0']) {

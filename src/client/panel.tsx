@@ -11,6 +11,7 @@ import { panelStore, usePanelOpen, usePanelTab } from './panel-store.ts'
 import { ComfyUIIcon } from './trigger.tsx'
 import { Lightbox } from './lightbox.js'
 import { isLoraInput, isLoraValue } from '../lora.js'
+import { createQueuePoller, type QueuePoller } from './queue-polling.ts'
 
 /** Panel geometry: pixel position/size once the user dragged or resized. */
 interface PanelGeom {
@@ -3377,41 +3378,64 @@ function QueueTab({ t, onPreview }: { t: ComfyUIPanelProps['t']; onPreview: (ima
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const load = async (current: JobFilter): Promise<void> => {
-    try {
-      const historyStatus = current === 'all' ? 'completed,failed,cancelled' : current
-      const [activeData, historyData] = await Promise.all([
-        getJson<JobsView>('/comfyui/jobs?status=pending,in_progress&limit=100'),
-        getJson<JobsView>(`/comfyui/jobs?status=${historyStatus}&limit=100`),
-      ])
-      if (activeData.ok !== true) throw new Error(activeData.error ?? t('queueError'))
-      if (historyData.ok !== true) throw new Error(historyData.error ?? t('queueError'))
-      // Active queue: earliest submitted first (running on top, later joins append below).
-      setActive([...(activeData.jobs ?? [])].sort((a, b) => (a.createTime ?? 0) - (b.createTime ?? 0)))
-      setHistory(historyData.jobs)
-      setError(null)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
-  }
+  const polling = useRef<QueuePoller | null>(null)
+  const actionPending = useRef(false)
+  const filterRef = useRef(filter)
+  const previousFilter = useRef(filter)
+  const translateRef = useRef(t)
+  filterRef.current = filter
+  translateRef.current = t
 
   useEffect(() => {
-    void load(filter)
-    const timer = setInterval(() => void load(filter), 3_000)
-    return () => clearInterval(timer)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const session = createQueuePoller<JobsView>({
+      read: (signal) => {
+        const historyStatus = filterRef.current === 'all' ? 'completed,failed,cancelled' : filterRef.current
+        return [
+          getJson<JobsView>('/comfyui/jobs?status=pending,in_progress&limit=100', signal),
+          getJson<JobsView>(`/comfyui/jobs?status=${historyStatus}&limit=100`, signal),
+        ]
+      },
+      apply: ([activeData, historyData]) => {
+        if (activeData?.ok !== true) throw new Error(activeData?.error ?? translateRef.current('queueError'))
+        if (historyData?.ok !== true) throw new Error(historyData?.error ?? translateRef.current('queueError'))
+        // Earliest submitted first; later queue entries append below.
+        setActive([...(activeData.jobs ?? [])].sort((a, b) => (a.createTime ?? 0) - (b.createTime ?? 0)))
+        setHistory(historyData.jobs ?? [])
+        setError(null)
+      },
+      fail: (cause) => setError(cause instanceof Error ? cause.message : String(cause)),
+    })
+    polling.current = session
+    return () => {
+      polling.current = null
+      actionPending.current = false
+      session.dispose()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (previousFilter.current === filter) return
+    previousFilter.current = filter
+    polling.current?.refresh()
   }, [filter])
 
   const act = async (payload: Record<string, unknown>): Promise<void> => {
+    const session = polling.current
+    if (session === null || actionPending.current) return
+    actionPending.current = true
     setBusy(true)
     try {
       const data = (await postJson('/comfyui/jobs/actions', payload)) as { ok: boolean; error?: string }
       if (data.ok !== true) throw new Error(data.error ?? 'action failed')
-      await load(filter)
+      if (polling.current === session) session.refresh()
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      if (polling.current === session) setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setBusy(false)
+      // Closing/switching tabs invalidates action completions as well as polls.
+      if (polling.current === session) {
+        actionPending.current = false
+        setBusy(false)
+      }
     }
   }
 

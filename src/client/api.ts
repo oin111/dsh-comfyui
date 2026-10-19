@@ -1,6 +1,6 @@
 /** Same-origin JSON helpers shared by the settings page and the panel. */
-export async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: { accept: 'application/json' } })
+export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { headers: { accept: 'application/json' }, signal })
   if (!response.ok) throw new Error(`HTTP ${response.status}`)
   return (await response.json()) as T
 }
