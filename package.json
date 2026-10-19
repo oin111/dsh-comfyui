@@ -1,6 +1,6 @@
 {
   "name": "@oin111/dsh-comfyui",
-  "version": "0.6.6",
+  "version": "0.6.7",
   "description": "Let the DeepSeek Harness agent smartly drive a local or remote ComfyUI to generate anything, with workflow and asset management panels, per-workflow skill packs, a companion skill and a same-origin media proxy.",
   "repository": {
     "type": "git",
@@ -33,9 +33,9 @@
     "build:host": "tsc -p tsconfig.json",
     "build:client": "tsdown -c tsdown.config.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "prepack": "npm run build",
+    "prepack": "npm run build && node scripts/validate-icon.mjs",
     "test:localization:full": "npm run build && LOCALIZATION_FULL=1 node --test scripts/test-localization.mjs",
-    "test": "node --test tests/integration/scripts/test-native-validation.mjs && npm run build && node --test scripts/test-assets-clear.mjs scripts/test-assets-clear-ui.mjs scripts/test-backend-boundaries.mjs scripts/test-media-filenames.mjs scripts/test-workflow-concurrency.mjs scripts/test-object-info-cache.mjs scripts/test-runtime-races.mjs scripts/test-queue-tracker.mjs scripts/test-queue-polling.mjs && node scripts/test-host-compat.mjs && node scripts/test-store-params.mjs && node scripts/test-skillpack.mjs && node scripts/test-transfer.mjs && node scripts/test-convert.mjs && node scripts/test-named-widgets.mjs && node --test scripts/test-lora-params.mjs scripts/test-lora-editor.mjs && node --test scripts/test-localization.mjs"
+    "test": "node --test scripts/test-icon-validation.mjs scripts/test-packaged-icon.mjs tests/integration/scripts/test-native-validation.mjs && npm run build && node --test scripts/test-assets-clear.mjs scripts/test-assets-clear-ui.mjs scripts/test-backend-boundaries.mjs scripts/test-media-filenames.mjs scripts/test-workflow-concurrency.mjs scripts/test-object-info-cache.mjs scripts/test-runtime-races.mjs scripts/test-queue-tracker.mjs scripts/test-queue-polling.mjs && node scripts/test-host-compat.mjs && node scripts/test-store-params.mjs && node scripts/test-skillpack.mjs && node scripts/test-transfer.mjs && node scripts/test-convert.mjs && node scripts/test-named-widgets.mjs && node --test scripts/test-lora-params.mjs scripts/test-lora-editor.mjs && node --test scripts/test-localization.mjs"
   },
   "keywords": [
     "deepseek",

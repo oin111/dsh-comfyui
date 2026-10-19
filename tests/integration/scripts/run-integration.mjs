@@ -32,6 +32,27 @@ try{
  const web=launch([dsh,'web','--no-open','--port',String(port)],{cwd:workspace});
  const login=await until(()=>`${web.stdout}\n${web.stderr}`.match(/http:\/\/127\.0\.0\.1:\d+\/\?token=[^\s]+/)?.[0],60000);
  await check('DSH authenticated browser-server bootstrap',async()=>{const r=await fetch(login,{redirect:'manual'});assert.equal(r.status,303);cookie=r.headers.getSetCookie().map(x=>x.split(';')[0]).join('; ');assert(cookie);const html=await request('/');assert.equal(html.status,200);assert.match(await html.text(),/<html/i);});
+ await check('Installed plugin metadata includes the exact PNG icon without diagnostics',async()=>{
+  // Actual host RPC: dsh-plugin-manager Remote and dsh-client-connection envelope.
+  const method='pluginManager/listPlugins';
+  const response=await json(`/api/${method}`,{body:{type:'client-request',rpcId:randomUUID(),method,payload:{args:{}}}});
+  assert.equal(response.result?.ok,true,JSON.stringify(response));
+  const rows=response.result.value;
+  assert(Array.isArray(rows),'listPlugins must return an inventory array');
+  const plugin=rows.find(row=>row.moduleName==='@oin111/dsh-comfyui');
+  assert(plugin,'ComfyUI must appear in the actual host inventory');
+  assert.equal(plugin.meta?.error,undefined,JSON.stringify(plugin.meta));
+  assert.match(plugin.meta?.icon||'',/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/,'metadata must include a nonempty PNG data URI');
+  const installed=path.join(root,'runtime/home/profiles/web/node_modules/@oin111/dsh-comfyui');
+  const manifest=JSON.parse(await fs.readFile(path.join(installed,'package.json'),'utf8'));
+  const target=manifest.icon??manifest.exports?.['./icon'];
+  assert.equal(typeof target,'string','installed package must configure an icon');
+  const bytes=await fs.readFile(path.join(installed,target));
+  assert(bytes.length>0&&bytes.length<=256*1024,'installed icon must fit the host limit');
+  assert.deepEqual(bytes.subarray(0,8),Buffer.from('89504e470d0a1a0a','hex'));
+  assert.deepEqual(Buffer.from(plugin.meta.icon.split(',')[1],'base64'),bytes,'host metadata must equal the installed asset');
+  return {moduleName:plugin.moduleName,icon:target,bytes:bytes.length};
+ });
  await check('Unauthenticated plugin route denied',async()=>{assert.equal((await request('/comfyui/ping',{auth:false})).status,401);});
  await check('Cross-origin plugin route denied',async()=>{assert.equal((await request('/comfyui/config',{origin:'https://untrusted.invalid'})).status,403);});
  await check('Plugin configuration and backend probe',async()=>{const config=await json('/comfyui/config');assert.equal(config.baseUrl,mockBase);assert.equal((await json('/comfyui/test',{body:{}})).ok,true);return{baseUrl:config.baseUrl};});

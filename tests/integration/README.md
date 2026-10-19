@@ -22,9 +22,9 @@ cd tests/integration
 
 # setup runs npm ci here, initializes isolated web/headless profiles,
 # installs the archive into both, and generates the mock configuration.
-npm run setup -- ./oin111-dsh-comfyui-0.6.6.tgz
+npm run setup -- ./oin111-dsh-comfyui-0.6.7.tgz
 npm run test:syntax
-npm run test:package -- ./oin111-dsh-comfyui-0.6.6.tgz
+npm run test:package -- ./oin111-dsh-comfyui-0.6.7.tgz
 npm test
 ```
 
@@ -43,7 +43,9 @@ Rerun `node scripts/configure.mjs` if changing `MOCK_PORT` after setup. For an e
 
 ## Coverage and limitations
 
-The 14 checks cover:
+The 15 checks cover:
+
+- Actual host plugin-manager metadata: nonempty PNG icon, no metadata diagnostic, and decoded bytes identical to the installed asset within the 256 KiB limit
 
 - Authenticated DSH web-server bootstrap and delivery of application HTML
 - Unauthenticated plugin-route 401 and cross-origin 403 responses
