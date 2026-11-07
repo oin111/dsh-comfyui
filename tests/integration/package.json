@@ -5,16 +5,16 @@
   "scripts": {
     "setup": "bash scripts/setup.sh",
     "test": "npm run test:validation && node scripts/run-integration.mjs",
-    "test:validation": "node --test scripts/test-native-validation.mjs",
+    "test:validation": "node --test scripts/test-native-validation.mjs scripts/test-executor-selection.mjs",
     "test:package": "node scripts/verify-package.mjs",
     "start:browser": "bash scripts/start-browser.sh",
     "test:syntax": "node scripts/check-syntax.mjs"
   },
   "dependencies": {
-    "@deepseek-ai/dsh": "0.2.1-rc.2",
+    "@deepseek-ai/dsh": "0.2.2-rc.1",
     "pnpm": "11.25.0"
   },
   "engines": {
-    "node": ">=22.19"
+    "node": ">=24.9.0"
   }
 }

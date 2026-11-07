@@ -1,12 +1,12 @@
-# DSH 0.2.1-rc.2 + dsh-comfyui integration harness
+# DSH 0.2.2-rc.1 + dsh-comfyui integration harness
 
 This harness installs the pinned official DSH npm package locally, installs a plugin tarball through the real DSH plugin command, and runs actual DSH web/headless/PTC code against deterministic ComfyUI and OpenAI-compatible LLM mocks. No GPU, real credentials, user data, global installation, or npm publication is needed.
 
 ## Requirements
 
-- Node.js >=22.19 (24.19.0 tested) and npm (11.9.0 tested).
+- Node.js >=24.9.0 (26.8.1 tested) and npm. This harness floor is separate from the plugin’s retained older-host compatibility.
 - Bash, `tar`, and Linux with an operational DSH-supported sandbox backend. The recorded run used `bwrap` with full enforcement. The suite intentionally fails if the sandbox cannot provide full enforcement; do not disable the sandbox to make it pass.
-- Registry access for dependencies. The lockfile pins DSH **0.2.1-rc.2** and locally installed pnpm **11.25.0**.
+- Registry access for dependencies. The lockfile pins DSH **0.2.2-rc.1** and locally installed pnpm **11.25.0**.
 - Free loopback ports 18188 (mock) and 13080 (DSH), or overrides as described below.
 - A shared process/network namespace for the mock, DSH, and test client. The test runner supervises them together.
 
@@ -60,11 +60,17 @@ The 15 checks cover:
 
 Native trace validation requires the exact expected tool sequence, a completed NDJSON result for every call ID, and matching non-error canonical results. Sync runs must contain a completed prompt and output media; async runs must return a background job and a completed `job_output` for that same job/prompt with parsed generation results. Cancellation must target the returned job and cancel exactly the newly submitted mock prompt, preserving the unrelated running sentinel. Before/after mock state rejects stale or unrelated prompt evidence.
 
-`npm run test:validation` runs the offline malformed-trace regressions, including a VM reproduction of the verbatim pre-fix assertions from `7ba991b`. Both this harness's `npm test` and the repository root's `npm test` run these regressions automatically, without needing DSH dependencies for the offline tests.
+Each headless invocation uses `--profile headless --patch runtime/executor-native.patch.yml` or `executor-ptc.patch.yml`. These generated overlays toggle the two executor rows shipped in DSH 0.2.2; they do not alter the shared profile, PTC runtime, or sandbox policy. `DSH_TOOLS_MODE` is not used: current DSH does not select its scoped executor from that legacy environment variable. The mock records the actual tool names sent by DSH to the model on every request. Native scenarios require ComfyUI/job tools and no `run_code`; PTC scenarios require exactly `run_code`. Both the observed surface and completed canonical tool results must pass.
+
+`npm run test:validation` runs executor-selection/tool-surface regressions and the offline malformed-trace regressions, including a VM reproduction of the verbatim pre-fix assertions from `7ba991b`. Both this harness's `npm test` and the repository root's `npm test` run these regressions automatically, without needing DSH dependencies for the offline tests.
 
 `observe-tools.mjs` observes canonical tool results and asks DSH's sandbox provider which backend it selects. It does not replace the runner, mock the sandbox, disable security, or expand permissions. A `sandbox.denied` diagnostic of `false` does not invalidate the boundary test: guest code deliberately catches the filesystem exception, and the test independently verifies both the denial code and the absence of the file.
 
-## Recorded result
+## Current validation
+
+See [VALIDATION-0.2.2-rc.1.md](VALIDATION-0.2.2-rc.1.md) for the fresh 15/15 run. The historical summary below remains unchanged and is not evidence for the current target.
+
+## Historical recorded result
 
 `validation-summary.json` is a sanitized historical summary of the run on source snapshot `38e9105f9d6cb8201e950e4baee8bdb8fdbf7d40`. The published source is [5f80e3b](https://github.com/oin111/dsh-comfyui/commit/5f80e3b5820dca5451702fe428cdb6be0ec71581), verified to have the identical Git tree; publication changed commit metadata only. It records **14/14 passing mock integrations**, all 54 packaged files matching in each profile, and real **bwrap / workspace-write / full-enforcement PTC success**. The sibling write was denied with `EROFS`.
 
@@ -87,4 +93,4 @@ Local `reports/integration-report.json` records the latest run. Per-scenario NDJ
 Public references:
 
 - [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-- [Pinned DSH npm release](https://www.npmjs.com/package/@deepseek-ai/dsh/v/0.2.1-rc.2)
+- [Pinned DSH npm release](https://www.npmjs.com/package/@deepseek-ai/dsh/v/0.2.2-rc.1)

@@ -47,7 +47,7 @@ const server=http.createServer(async(req,res)=>{try{
  if(url.pathname==='/__health') return json(res,{ok:true,mock:true});
  if(url.pathname==='/v1/models') return json(res,{object:'list',data:[{id:'dsh-e2e-mock',object:'model',owned_by:'local-test'}]});
  if(url.pathname==='/v1/chat/completions') {
-  const result=llmResponse(body);state.llm.push({tool:result.tool_calls?.[0]?.function.name,stream:body.stream});await event({kind:'llm',request:body,response:result});
+  const result=llmResponse(body);state.llm.push({tool:result.tool_calls?.[0]?.function.name,stream:body.stream,tools:(body.tools||[]).map(x=>x.function?.name)});await event({kind:'llm',request:body,response:result});
   const base={id:'chatcmpl-e2e',object:'chat.completion',created:Math.floor(Date.now()/1000),model:'dsh-e2e-mock'};
   if(!body.stream) return json(res,{...base,choices:[{index:0,message:result,finish_reason:result.tool_calls?'tool_calls':'stop'}],usage:{prompt_tokens:10,completion_tokens:10,total_tokens:20}});
   res.writeHead(200,{'content-type':'text/event-stream','cache-control':'no-cache'});
