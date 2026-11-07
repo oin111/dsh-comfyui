@@ -152,7 +152,7 @@ export const CLIENT_ID = randomUUID()
  * Route prefix learned per base URL: '' when bare routes answer, '/api' when
  * only the /api-prefixed mirror does. ComfyUI serves every route under both,
  * but API-only reverse proxies (comfy-api-proxy, Issue #6) forward just
- * `/api/*`, so the bare /system_stats probe 404s. Learned on the first
+ * `/api/*`, so the bare /queue probe 404s. Learned on the first
  * request and kept for the process — clients are created per call.
  */
 const routePrefix = new Map<string, '' | '/api'>()
@@ -403,6 +403,16 @@ export class ComfyUIClient {
   async getHistory(promptId: string, signal?: AbortSignal): Promise<ComfyUIHistoryEntry | undefined> {
     const data = await this.request<Record<string, ComfyUIHistoryEntry>>(`/history/${encodeURIComponent(promptId)}`, { signal })
     return data[promptId]
+  }
+
+  /** Reachability only: GET /queue reads scheduler state, never device memory or generation. */
+  async probeConnection(): Promise<void> {
+    const raw = await this.request<unknown>('/queue')
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)
+      || !Array.isArray((raw as Record<string, unknown>).queue_running)
+      || !Array.isArray((raw as Record<string, unknown>).queue_pending)) {
+      throw new ComfyUIError('Invalid ComfyUI /queue response: expected queue_running and queue_pending arrays')
+    }
   }
 
   /** The server-side queue: running + pending prompts. */

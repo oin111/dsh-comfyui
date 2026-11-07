@@ -55,7 +55,7 @@ const server=http.createServer(async(req,res)=>{try{
   res.write(`data: ${JSON.stringify({...base,object:'chat.completion.chunk',choices:[{index:0,delta,finish_reason:null}]})}\n\n`);
   res.write(`data: ${JSON.stringify({...base,object:'chat.completion.chunk',choices:[{index:0,delta:{},finish_reason:result.tool_calls?'tool_calls':'stop'}],usage:{prompt_tokens:10,completion_tokens:10,total_tokens:20}})}\n\ndata: [DONE]\n\n`); return res.end();
  }
- if(p==='/system_stats')return json(res,{system:{os:'mock',comfyui_version:'mock-e2e-1.0',python_version:'mock'},devices:[]});
+ if(p==='/system_stats')return json(res,{error:'torch.cuda.OutOfMemoryError: CUDA out of memory in torch.cuda.mem_get_info'},500);
  if(p==='/object_info'||p.startsWith('/object_info/'))return json(res,p==='/object_info'?info:{[decodeURIComponent(p.split('/').pop())]:info[decodeURIComponent(p.split('/').pop())]});
  if(p==='/v2/userdata'||p==='/userdata')return json(res,[]);
  if(p==='/prompt'&&req.method==='POST'){const id=body.prompt_id||randomUUID();const n=jobs.size+1;const delay=Object.values(body.prompt||{}).find(x=>x.inputs?.e2e_delay_ms)?.inputs.e2e_delay_ms||350;jobs.set(id,{n,workflow:body.prompt,doneAt:Date.now()+delay});state.prompts.push(id);await event({kind:'prompt',id,body});return json(res,{prompt_id:id,number:n,node_errors:{}});}

@@ -266,10 +266,10 @@ export function mountComfyUIRoutes(ctx: Context, runtime: ComfyUIRuntime, webSer
       const startedAt = Date.now()
       try {
         const client = await runtime.getClient()
-        const stats = await client.systemStats()
+        await client.probeConnection()
         sendJson(response, 200, {
           ok: true,
-          version: stats.system?.comfyui_version ?? 'unknown',
+          version: 'unknown', // /queue deliberately does not query GPU stats for a version.
           latencyMs: Date.now() - startedAt,
         })
       } catch (error) {

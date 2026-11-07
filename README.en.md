@@ -22,6 +22,8 @@
 
 ## Backend safety and transfer limits
 
+- Opening the panel and testing the connection in Settings use read-only `GET /queue` (or `/api/queue`), validating the running/pending queue arrays. They never request `/system_stats`, query CUDA memory, or submit generation. The probe reports reachability, not GPU readiness; the version is `unknown` because this endpoint does not supply it. Unreachable or malformed backends remain errors.
+
 - Backend JSON responses are limited to **8 MiB** and error bodies to **64 KiB**. Declared Content-Length is checked, but actual bytes are counted too, including chunked or misleading-length bodies.
 - Buffered and streamed media bodies (HTTP 200 and 206) are limited to `maxMediaBytes` per transfer. A single Range is capped to that budget, preserving its start (or shortening a suffix); malformed/multipart ranges and inconsistent `Content-Range` responses are refused. This still allows bounded seeking within larger files. HEAD reads no body; 416 bodies are discarded.
 - `connectTimeoutMs` remains active for the whole media transfer, not just response headers. Oversize/refused bodies and downstream stream cancellation close the upstream body. A streaming failure after headers closes the download rather than returning an error JSON.
